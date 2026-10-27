@@ -5,6 +5,9 @@ name: Build Android APK
 # that the Android project and asset packaging still compile.
 on:
     workflow_dispatch:
+    # Temporary branch-scoped trigger used to validate device-compatible APKs.
+    push:
+        branches: [arena/747e4819-ctrdx]
 
 permissions:
     contents: read
@@ -106,8 +109,9 @@ jobs:
 
             # BuildContent=false because the verified assets were fetched and converted above.
             # Normal command-line Android publish signs the APK; AndroidKeyStore=false selects
-            # the standard generated debug key, so no repository secrets are needed. Release
-            # signing remains a local concern.
+            # the standard generated debug key, so no repository secrets are needed. Enable
+            # v1/v2 signatures as well so API 21+ test devices can install the package.
+            # Release signing remains a local concern.
             - name: Publish signed ARM64 and ARMv7 APKs
               run: |
                   for rid in $RIDS; do
@@ -118,7 +122,8 @@ jobs:
                           -p:BuildContent=false \
                           -p:DeployContent=false \
                           -p:DeployAndroidContent=true \
-                          -p:AndroidKeyStore=false
+                          -p:AndroidKeyStore=false \
+                          -p:AndroidApkSignerAdditionalArguments="--v1-signing-enabled true --v2-signing-enabled true"
                   done
 
             # Publish can leave both an unsigned package and a signed package in the output.
@@ -135,6 +140,7 @@ jobs:
                   rids = os.environ["RIDS"].split()
                   assert rids, "No Android RIDs configured"
                   sdk = os.environ.get("ANDROID_SDK_ROOT") or os.environ["ANDROID_HOME"]
+                  aapt2 = Path(sdk) / "build-tools/36.0.0/aapt2"
                   apksigner = Path(sdk) / "build-tools/36.0.0/apksigner"
                   staging = Path(os.environ["RUNNER_TEMP"]) / "ctrdx-apk"
                   staging.mkdir(parents=True, exist_ok=True)
@@ -160,7 +166,32 @@ jobs:
                                   assert package.getinfo(name).compress_type == zipfile.ZIP_STORED, (
                                       f"{apk}: {name} is compressed; AssetManager.OpenFd would fail"
                                   )
-                      subprocess.run([str(apksigner), "verify", str(apk)], check=True)
+                      badging = subprocess.run(
+                          [str(aapt2), "dump", "badging", str(apk)],
+                          check=True,
+                          capture_output=True,
+                          text=True,
+                      ).stdout
+                      print(badging)
+                      assert "minSdkVersion:'21'" in badging, f"{apk}: unexpected minimum SDK"
+                      expected_abi = {"android-arm64": "arm64-v8a", "android-arm": "armeabi-v7a"}[rid]
+                      assert f"native-code: '{expected_abi}'" in badging, f"{apk}: wrong native ABI"
+
+                      # API 21-23 devices need v1; API 24+ devices can use v2.
+                      # Do not ship a v3-only test package to older ARMv7 devices.
+                      signature = subprocess.run(
+                          [str(apksigner), "verify", "--verbose", str(apk)],
+                          check=True,
+                          capture_output=True,
+                          text=True,
+                      ).stdout
+                      print(signature)
+                      assert "Verified using v1 scheme (JAR signing): true" in signature, (
+                          f"{apk}: v1 signature is required for API 21-23"
+                      )
+                      assert "Verified using v2 scheme (APK Signature Scheme v2): true" in signature, (
+                          f"{apk}: v2 signature is missing"
+                      )
                       destination = staging / f"CutTheRopeDX-{rid}.apk"
                       shutil.copy2(apk, destination)
                       print(f"Verified and staged signed real-content {rid} APK: {destination}")

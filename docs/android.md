@@ -1,6 +1,6 @@
 # Android build
 
-The Android head runs the same `CutTheRopeDX.Core` game as the desktop and browser heads. It uses SkiaSharp over OpenGL ES, Android `SoundPool`/`MediaPlayer` for audio, and a native `VideoView` for cutscenes. Android 10 (API 29) or later is required.
+The Android head runs the same `CutTheRopeDX.Core` game as the desktop and browser heads. It uses SkiaSharp over OpenGL ES, Android `SoundPool`/`MediaPlayer` for audio, and a native `VideoView` for cutscenes. Android 5.0 (API 21) or later is required.
 
 ## Prerequisites
 
@@ -57,7 +57,7 @@ Do not use `DeployAndroidContent=false` for a playable build; that option is for
 
 ## Build an APK with GitHub Actions
 
-Run the **Build Android APK** workflow manually from the Actions tab. Each run downloads and verifies the original assets through the shared content workflow, installs JDK 21, the Android SDK/build tools, the .NET Android workload, and pinned FFmpeg, then converts the real game content once. It builds and uploads two signed APK artifacts: `ctrdx-android-arm64` for 64-bit ARM devices and `ctrdx-android-arm` for 32-bit ARMv7 devices. Both APKs use the standard generated Android debug key so they can be installed for testing without configuring secrets; use your own signing properties for a distribution build.
+Run the **Build Android APK** workflow manually from the Actions tab. Each run downloads and verifies the original assets through the shared content workflow, installs JDK 21, the Android SDK/build tools, the .NET Android workload, and pinned FFmpeg, then converts the real game content once. It builds and uploads two signed APK artifacts: `ctrdx-android-arm64` for 64-bit ARM devices and `ctrdx-android-arm` for 32-bit ARMv7 devices. Both APKs use the standard generated Android debug key with v1/v2 compatibility signatures so they can be installed for testing on API 21+ devices without configuring secrets; use your own signing properties for a distribution build.
 
 ## Install and debug
 

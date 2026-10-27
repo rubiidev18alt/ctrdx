@@ -11,7 +11,7 @@
     <ApplicationTitle>Cut the Rope DX</ApplicationTitle>
     <ApplicationVersion>1</ApplicationVersion>
     <ApplicationDisplayVersion>2.50.1</ApplicationDisplayVersion>
-    <SupportedOSPlatformVersion>29</SupportedOSPlatformVersion>
+    <SupportedOSPlatformVersion>21</SupportedOSPlatformVersion>
     <!-- Keep the four-ABI default, but let an explicit -r select one ABI instead of
          leaving both RuntimeIdentifier and RuntimeIdentifiers set for the SDK to reconcile. -->
     <RuntimeIdentifiers Condition="'$(RuntimeIdentifier)' == ''">android-arm;android-arm64;android-x86;android-x64</RuntimeIdentifiers>

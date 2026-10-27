@@ -203,7 +203,11 @@ namespace CutTheRopeDX.Android
         private void ConfigureWindow()
         {
             Window.AddFlags(WindowManagerFlags.KeepScreenOn);
-            Window.Attributes.LayoutInDisplayCutoutMode = LayoutInDisplayCutoutMode.ShortEdges;
+            if (Build.VERSION.SdkInt >= BuildVersionCodes.P)
+            {
+                Window.Attributes.LayoutInDisplayCutoutMode = LayoutInDisplayCutoutMode.ShortEdges;
+            }
+
             ApplyImmersiveMode();
         }
 

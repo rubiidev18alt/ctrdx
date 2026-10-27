@@ -5,9 +5,6 @@ name: Build Android APK
 # that the Android project and asset packaging still compile.
 on:
     workflow_dispatch:
-    # Temporary branch-scoped trigger used to validate device-compatible APKs.
-    push:
-        branches: [arena/747e4819-ctrdx]
 
 permissions:
     contents: read

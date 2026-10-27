@@ -1,0 +1,977 @@
+using System;
+using System.Collections.Generic;
+
+using CutTheRopeDX.Framework.Core;
+using CutTheRopeDX.Framework.Helpers;
+using CutTheRopeDX.Framework.Platform;
+
+namespace CutTheRopeDX.Framework.Visual
+{
+    /// <summary>
+    /// A <see cref="BaseElement"/> that provides scrollable, clipped content with touch-based drag, inertia, bounce, and scroll-point snapping.
+    /// </summary>
+    internal sealed class ScrollableContainer : BaseElement
+    {
+        /// <summary>
+        /// Outputs the current scroll position, maximum scroll position, and scroll coefficients.
+        /// </summary>
+        /// <param name="sp">Receives the current scroll position.</param>
+        /// <param name="mp">Receives the maximum scroll position.</param>
+        /// <param name="sc">Receives the scroll coefficients (container/viewport ratio).</param>
+        public void ProvideScrollPosMaxScrollPosScrollCoeff(ref Vector sp, ref Vector mp, ref Vector sc)
+        {
+            sp = GetScroll();
+            mp = GetMaxScroll();
+            float scrollCoeffX = container.width / width;
+            float scrollCoeffY = container.height / height;
+            sc = Vect(scrollCoeffX, scrollCoeffY);
+        }
+
+        /// <inheritdoc />
+        public override int AddChildwithID(BaseElement c, int i)
+        {
+            int childId = container.AddChildwithID(c, i);
+            c.parentAnchor = 9;
+            return childId;
+        }
+
+        /// <inheritdoc />
+        public override int AddChild(BaseElement c)
+        {
+            c.parentAnchor = 9;
+            return container.AddChild(c);
+        }
+
+        /// <inheritdoc />
+        public override void RemoveChildWithID(int i)
+        {
+            container.RemoveChildWithID(i);
+        }
+
+        /// <inheritdoc />
+        public override void RemoveChild(BaseElement c)
+        {
+            container.RemoveChild(c);
+        }
+
+        /// <inheritdoc />
+        public override BaseElement GetChild(int i)
+        {
+            return container.GetChild(i);
+        }
+
+        /// <inheritdoc />
+        public override int ChildsCount()
+        {
+            return container.ChildsCount();
+        }
+
+        /// <inheritdoc />
+        public override void Draw()
+        {
+            PreDraw();
+            Renderer.Enable(Renderer.GL_SCISSOR_TEST);
+            Renderer.SetScissor(drawX, drawY, width, height);
+            PostDraw();
+            Renderer.Disable(Renderer.GL_SCISSOR_TEST);
+        }
+
+        /// <inheritdoc />
+        public override void PostDraw()
+        {
+            if (!passTransformationsToChilds)
+            {
+                RestoreTransformations(this);
+            }
+            container.PreDraw();
+            if (!container.passTransformationsToChilds)
+            {
+                RestoreTransformations(container);
+            }
+            Dictionary<int, BaseElement> dictionary = container.GetChilds();
+            int i = 0;
+            int count = dictionary.Count;
+            while (i < count)
+            {
+                BaseElement baseElement = dictionary[i];
+                float childDrawX = baseElement.drawX;
+                float childDrawY = baseElement.drawY;
+                if (baseElement != null && baseElement.visible && RectInRect(childDrawX, childDrawY, childDrawX + baseElement.width, childDrawY + baseElement.height, drawX, drawY, drawX + width, drawY + height))
+                {
+                    baseElement.Draw();
+                }
+                else
+                {
+                    CalculateTopLeft(baseElement);
+                }
+                i++;
+            }
+            if (container.passTransformationsToChilds)
+            {
+                RestoreTransformations(container);
+            }
+            if (passTransformationsToChilds)
+            {
+                RestoreTransformations(this);
+            }
+        }
+
+        /// <inheritdoc />
+        public override void Update(float delta)
+        {
+            base.Update(delta);
+            targetPoint = vectZero;
+            if (touchTimer > 0f)
+            {
+                touchTimer -= delta;
+                if (touchTimer <= 0f)
+                {
+                    touchTimer = 0f;
+                    passTouches = true;
+                    if (base.OnTouchDownXY(savedTouch.X, savedTouch.Y))
+                    {
+                        return;
+                    }
+                }
+            }
+            if (touchReleaseTimer > 0f)
+            {
+                touchReleaseTimer -= delta;
+                if (touchReleaseTimer <= 0f)
+                {
+                    touchReleaseTimer = 0f;
+                    if (base.OnTouchUpXY(savedTouch.X, savedTouch.Y))
+                    {
+                        return;
+                    }
+                }
+            }
+            if (touchState == TOUCH_STATE.UP)
+            {
+                if (shouldBounceHorizontally)
+                {
+                    if (container.x > 0)
+                    {
+                        float speed = 50 + (MathF.Abs(container.x) * 5);
+                        MoveToPointDeltaSpeed(Vect(0f, container.y), delta, speed);
+                    }
+                    else if (container.x < (-container.width + width) && container.x < 0)
+                    {
+                        float speed = 50 + (MathF.Abs(-container.width + width - container.x) * 5);
+                        MoveToPointDeltaSpeed(Vect(-container.width + width, container.y), delta, speed);
+                    }
+                }
+                if (shouldBounceVertically)
+                {
+                    if (container.y > 0)
+                    {
+                        MoveToPointDeltaSpeed(Vect(container.x, 0f), delta, 50f + (MathF.Abs(container.y) * 5f));
+                    }
+                    else if (container.y < (-container.height + height) && container.y < 0f)
+                    {
+                        MoveToPointDeltaSpeed(Vect(container.x, -container.height + height), delta, 50f + (MathF.Abs(-container.height + height - container.y) * 5f));
+                    }
+                }
+            }
+            if (movingToSpoint)
+            {
+                Vector vector = spoints[targetSpoint];
+                MoveToPointDeltaSpeed(vector, delta, MathF.Max(100f, VectDistance(vector, Vect(container.x, container.y)) * 4f * spointMoveMultiplier));
+                if (container.x == vector.X && container.y == vector.Y)
+                {
+                    delegateScrollableContainerProtocol?.ScrollableContainerreachedScrollPoint(this, targetSpoint);
+                    movingToSpoint = false;
+                    targetSpoint = -1;
+                    lastTargetSpoint = -1;
+                    move = vectZero;
+                }
+            }
+            else if (canSkipScrollPoints && TotalScrollPoints > 0 && !VectEqual(move, vectZero) && VectLength(move) < 150f && targetSpoint == -1)
+            {
+                StartMovingToSpointInDirection(move);
+            }
+            if (!VectEqual(move, vectZero))
+            {
+                _ = VectEqual(targetPoint, vectZero);
+                _ = Vect(container.x, container.y);
+                Vector v = VectMult(VectNeg(move), deaccelerationSpeed);
+                move = VectAdd(move, VectMult(v, delta));
+
+                // Compared against the speed rather than this frame's displacement: the same
+                // glide must end at the same place whether the host draws at 60 or 120 Hz, and
+                // a per-frame distance threshold stops a fast display's glide sooner.
+                if (MathF.Abs(move.X) < minScrollSpeed)
+                {
+                    move.X = 0f;
+                }
+                if (MathF.Abs(move.Y) < minScrollSpeed)
+                {
+                    move.Y = 0f;
+                }
+                _ = MoveContainerBy(VectMult(move, delta));
+            }
+            CloseVelocitySample(delta);
+        }
+
+        /// <inheritdoc />
+        public override void Show()
+        {
+            touchTimer = 0f;
+            passTouches = false;
+            touchReleaseTimer = 0f;
+            move = vectZero;
+            ResetVelocitySamples();
+            if (resetScrollOnShow)
+            {
+                SetScroll(vectZero);
+            }
+        }
+
+        /// <inheritdoc />
+        public override bool OnTouchDownXY(float tx, float ty)
+        {
+            if (!PointInRect(tx, ty, drawX, drawY, width, height))
+            {
+                return false;
+            }
+            if (touchPassTimeout == 0f)
+            {
+                bool handledByChild = base.OnTouchDownXY(tx, ty);
+                if (dontHandleTouchDownsHandledByChilds && handledByChild)
+                {
+                    return true;
+                }
+            }
+            else
+            {
+                touchTimer = touchPassTimeout;
+                savedTouch = Vect(tx, ty);
+                totalDrag = vectZero;
+                passTouches = false;
+            }
+            touchState = TOUCH_STATE.DOWN;
+            // movingByInertion = false;
+            movingToSpoint = false;
+            targetSpoint = -1;
+            dragStart = Vect(tx, ty);
+            ResetVelocitySamples();
+            return true;
+        }
+
+        /// <inheritdoc />
+        public override bool OnTouchMoveXY(float tx, float ty)
+        {
+            if (touchPassTimeout == 0f || passTouches)
+            {
+                bool handledByChild = base.OnTouchMoveXY(tx, ty);
+                if (dontHandleTouchMovesHandledByChilds && handledByChild)
+                {
+                    return true;
+                }
+            }
+            Vector vector = Vect(tx, ty);
+            if (VectEqual(dragStart, vector))
+            {
+                return false;
+            }
+            if (VectEqual(dragStart, impossibleTouch) && !PointInRect(tx, ty, drawX, drawY, width, height))
+            {
+                return false;
+            }
+            touchState = TOUCH_STATE.MOVING;
+            if (!VectEqual(dragStart, impossibleTouch))
+            {
+                Vector dragDelta = VectSub(vector, dragStart);
+                dragStart = vector;
+
+                // A pointer that jumps discontinuously - capture lost and regained, or a second
+                // finger landing elsewhere - is dropped whole rather than clamped. Clamping
+                // applied part of the jump and discarded the rest, which also meant every
+                // genuine fast swipe fell behind the finger by whatever the cap cut off.
+                // dragStart has already advanced, so the next event measures from where the
+                // pointer really is instead of repeating the rejected distance.
+                if (MathF.Abs(dragDelta.X) > maxTouchMoveLength || MathF.Abs(dragDelta.Y) > maxTouchMoveLength)
+                {
+                    return false;
+                }
+                totalDrag = VectAdd(totalDrag, dragDelta);
+                if ((touchTimer > 0f || untouchChildsOnMove) && VectLength(totalDrag) > touchMoveIgnoreLength)
+                {
+                    touchTimer = 0f;
+                    passTouches = false;
+                    _ = base.OnTouchUpXY(-1f, -1f);
+                }
+                if (container.width <= width)
+                {
+                    dragDelta.X = 0f;
+                }
+                if (container.height <= height)
+                {
+                    dragDelta.Y = 0f;
+                }
+                if (shouldBounceHorizontally && (container.x > 0f || container.x < (-container.width + width)))
+                {
+                    dragDelta.X /= 2f;
+                }
+                if (shouldBounceVertically && (container.y > 0f || container.y < (-container.height + height)))
+                {
+                    dragDelta.Y /= 2f;
+                }
+                pendingDrag = VectAdd(pendingDrag, MoveContainerBy(dragDelta));
+                move = vectZero;
+                return true;
+            }
+            return false;
+        }
+
+        /// <inheritdoc />
+        public override bool OnTouchUpXY(float tx, float ty)
+        {
+            if (tx == -10000f && ty == -10000f)
+            {
+                return false;
+            }
+            if (touchPassTimeout == 0f || passTouches)
+            {
+                bool handledByChild = base.OnTouchUpXY(tx, ty);
+                if (dontHandleTouchUpsHandledByChilds && handledByChild)
+                {
+                    return true;
+                }
+            }
+            if (touchTimer > 0f)
+            {
+                bool replayHandledByChild = base.OnTouchDownXY(savedTouch.X, savedTouch.Y);
+                touchReleaseTimer = 0.2f;
+                touchTimer = 0f;
+                if (dontHandleTouchDownsHandledByChilds && replayHandledByChild)
+                {
+                    return true;
+                }
+            }
+            if (touchState == TOUCH_STATE.UP)
+            {
+                return false;
+            }
+            touchState = TOUCH_STATE.UP;
+            move = MeasureReleaseVelocity();
+            if (TotalScrollPoints > 0)
+            {
+                if (!canSkipScrollPoints)
+                {
+                    if (minAutoScrollToSpointLength != -1f && VectLength(move) > minAutoScrollToSpointLength)
+                    {
+                        StartMovingToSpointInDirection(move);
+                    }
+                    else
+                    {
+                        StartMovingToSpointInDirection(vectZero);
+                    }
+                }
+                else if (VectEqual(move, vectZero))
+                {
+                    StartMovingToSpointInDirection(vectZero);
+                }
+            }
+            dragStart = impossibleTouch;
+            return true;
+        }
+
+        /// <inheritdoc />
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing)
+            {
+                spoints = null;
+            }
+            base.Dispose(disposing);
+        }
+
+        /// <summary>
+        /// Initializes the container with the specified viewport size and content element.
+        /// Resets scroll-point state, touch handling, and scrolling behavior to defaults.
+        /// </summary>
+        /// <param name="w">Viewport width.</param>
+        /// <param name="h">Viewport height.</param>
+        /// <param name="c">Content element that will be clipped and scrolled inside the viewport.</param>
+        /// <returns>The initialized container instance.</returns>
+        public ScrollableContainer InitWithWidthHeightContainer(float w, float h, BaseElement c)
+        {
+            // float fixedDeltaSetting = ApplicationSettings.GetInt(5);
+            // fixedDelta = (1 / fixedDeltaSetting);
+            spoints = null;
+            TotalScrollPoints = -1;
+            spointsCapacity = -1;
+            targetSpoint = -1;
+            lastTargetSpoint = -1;
+            deaccelerationSpeed = 3f;
+            minScrollSpeed = 12f;
+            // scrollToPointDuration = 0.35f;
+            canSkipScrollPoints = false;
+            shouldBounceHorizontally = false;
+            shouldBounceVertically = false;
+            // A tap has to survive the pointer wobbling by a unit or two. At zero, a single unit
+            // of drag between press and release zeroes touchTimer, which skips the tap rescue in
+            // OnTouchUpXY and swallows the click outright — and a unit is sub-pixel once the
+            // window is smaller than the 2560-wide logical screen, so a plain click routinely
+            // produces one. PopupBuilder already overrides this to the same tolerance.
+            touchMoveIgnoreLength = 5f;
+
+            // Sized against the design space rather than left at the 40 the original carried: in
+            // a 480-wide design that was five screen widths a second and only outliers reached
+            // it, but the same number in this 2560-wide one caps drags below one screen width a
+            // second, which an ordinary swipe passes.
+            maxTouchMoveLength = ViewportLayout.DesignWidth / 4f;
+            touchPassTimeout = 0.5f;
+            minAutoScrollToSpointLength = -1f;
+            resetScrollOnShow = true;
+            untouchChildsOnMove = false;
+            dontHandleTouchDownsHandledByChilds = false;
+            dontHandleTouchMovesHandledByChilds = false;
+            dontHandleTouchUpsHandledByChilds = false;
+            touchTimer = 0f;
+            passTouches = false;
+            touchReleaseTimer = 0f;
+            move = vectZero;
+            container = c;
+            width = (int)w;
+            height = (int)h;
+            container.parentAnchor = 9;
+            container.parent = this;
+            childs[0] = container;
+            dragStart = impossibleTouch;
+            touchState = TOUCH_STATE.UP;
+            return this;
+        }
+
+        /// <summary>
+        /// Initializes the container with an empty content element sized to the specified content bounds.
+        /// </summary>
+        /// <param name="w">Viewport width.</param>
+        /// <param name="h">Viewport height.</param>
+        /// <param name="cw">Scrollable content width.</param>
+        /// <param name="ch">Scrollable content height.</param>
+        /// <returns>The initialized container instance.</returns>
+        public ScrollableContainer InitWithWidthHeightContainerWidthHeight(float w, float h, float cw, float ch)
+        {
+            container = new BaseElement
+            {
+                width = (int)cw,
+                height = (int)ch
+            };
+            _ = InitWithWidthHeightContainer(w, h, container);
+            return this;
+        }
+
+        /// <summary>
+        /// Enables scroll-point support and allocates storage for up to <paramref name="n"/> points.
+        /// </summary>
+        /// <param name="n">Maximum number of scroll points to store.</param>
+        public void TurnScrollPointsOnWithCapacity(int n)
+        {
+            spointsCapacity = n;
+            spoints = new Vector[spointsCapacity];
+            TotalScrollPoints = 0;
+        }
+
+        /// <summary>
+        /// Adds a scroll point using logical scroll coordinates.
+        /// </summary>
+        /// <param name="sx">Horizontal scroll position associated with the point.</param>
+        /// <param name="sy">Vertical scroll position associated with the point.</param>
+        /// <returns>The index assigned to the new scroll point.</returns>
+        public int AddScrollPointAtXY(float sx, float sy)
+        {
+            AddScrollPointAtXYwithID(sx, sy, TotalScrollPoints);
+            return TotalScrollPoints - 1;
+        }
+
+        /// <summary>
+        /// Stores a scroll point at the specified index.
+        /// </summary>
+        /// <param name="sx">Horizontal scroll position associated with the point.</param>
+        /// <param name="sy">Vertical scroll position associated with the point.</param>
+        /// <param name="i">Target scroll point index.</param>
+        public void AddScrollPointAtXYwithID(float sx, float sy, int i)
+        {
+            spoints[i] = Vect(0f - sx, 0f - sy);
+            if (i > TotalScrollPoints - 1)
+            {
+                TotalScrollPoints = i + 1;
+            }
+        }
+
+        /// <summary>
+        /// Returns the number of registered scroll points.
+        /// </summary>
+        public int TotalScrollPoints { get; private set; }
+
+        /// <summary>
+        /// Returns the stored container offset for the specified scroll point.
+        /// </summary>
+        /// <param name="i">Scroll point index.</param>
+        /// <returns>Container offset used when snapping to the scroll point.</returns>
+        public Vector GetScrollPoint(int i)
+        {
+            return spoints[i];
+        }
+
+        /// <summary>
+        /// Returns the current logical scroll offset.
+        /// </summary>
+        /// <returns>Current horizontal and vertical scroll offset.</returns>
+        public Vector GetScroll()
+        {
+            return Vect(0f - container.x, 0f - container.y);
+        }
+
+        /// <summary>
+        /// Returns the maximum logical scroll offset allowed by the current content size.
+        /// </summary>
+        /// <returns>Maximum horizontal and vertical scroll offset.</returns>
+        public Vector GetMaxScroll()
+        {
+            return Vect(container.width - width, container.height - height);
+        }
+
+        /// <summary>
+        /// Sets the current scroll offset immediately and cancels inertial or snap-to-point movement.
+        /// </summary>
+        /// <param name="s">Logical scroll offset to apply.</param>
+        public void SetScroll(Vector s)
+        {
+            move = vectZero;
+            ResetVelocitySamples();
+            container.x = 0f - s.X;
+            container.y = 0f - s.Y;
+            movingToSpoint = false;
+            targetSpoint = -1;
+            lastTargetSpoint = -1;
+        }
+
+        /// <summary>
+        /// Jumps directly to the specified scroll point and notifies the delegate that it was reached.
+        /// </summary>
+        /// <param name="sp">Scroll point index.</param>
+        public void PlaceToScrollPoint(int sp)
+        {
+            move = vectZero;
+            container.x = spoints[sp].X;
+            container.y = spoints[sp].Y;
+            movingToSpoint = false;
+            targetSpoint = -1;
+            lastTargetSpoint = sp;
+            delegateScrollableContainerProtocol?.ScrollableContainerreachedScrollPoint(this, sp);
+        }
+
+        /// <summary>
+        /// Starts animating toward the specified scroll point.
+        /// </summary>
+        /// <param name="sp">Target scroll point index.</param>
+        /// <param name="m">Speed multiplier applied while moving toward the point.</param>
+        public void MoveToScrollPointmoveMultiplier(int sp, float m)
+        {
+            movingToSpoint = true;
+            // movingByInertion = false;
+            spointMoveMultiplier = m;
+            targetSpoint = sp;
+            lastTargetSpoint = targetSpoint;
+        }
+
+        /// <summary>
+        /// Selects the nearest valid scroll point, preferring points that lie in the supplied direction.
+        /// Updates the target scroll-point state and delegate notifications.
+        /// </summary>
+        /// <param name="d">Preferred movement direction. Use <c>vectZero</c> to ignore direction.</param>
+        public void CalculateNearsetScrollPointInDirection(Vector d)
+        {
+            // spointMoveDirection = d;
+            int nearestScrollPoint = -1;
+            float nearestDistance = 9999999f;
+            float directionAngle = AngleTo0_360(float.RadiansToDegrees(VectAngleNormalized(d)));
+            Vector v = Vect(container.x, container.y);
+            for (int i = 0; i < TotalScrollPoints; i++)
+            {
+                if (spoints[i].X <= 0f && (spoints[i].X >= (-container.width + width) || spoints[i].X >= 0f) && spoints[i].Y <= 0f && (spoints[i].Y >= (-container.height + height) || spoints[i].Y >= 0f))
+                {
+                    float candidateDistance = VectDistance(spoints[i], v);
+                    if ((VectEqual(d, vectZero) || MathF.Abs(AngleTo0_360(float.RadiansToDegrees(VectAngleNormalized(VectSub(spoints[i], v)))) - directionAngle) <= DEG_90) && candidateDistance < nearestDistance)
+                    {
+                        nearestScrollPoint = i;
+                        nearestDistance = candidateDistance;
+                    }
+                }
+            }
+            if (nearestScrollPoint == -1 && !VectEqual(d, vectZero))
+            {
+                CalculateNearsetScrollPointInDirection(vectZero);
+                return;
+            }
+            targetSpoint = nearestScrollPoint;
+            if (!canSkipScrollPoints && targetSpoint != lastTargetSpoint)
+            {
+                //movingByInertion = false;
+            }
+            if (lastTargetSpoint != targetSpoint && targetSpoint != -1 && delegateScrollableContainerProtocol != null)
+            {
+                delegateScrollableContainerProtocol.ScrollableContainerchangedTargetScrollPoint(this, targetSpoint);
+            }
+            float moveAngle = AngleTo0_360(float.RadiansToDegrees(VectAngleNormalized(move)));
+            float targetAngle = AngleTo0_360(float.RadiansToDegrees(VectAngleNormalized(VectSub(spoints[targetSpoint], v))));
+            spointMoveMultiplier = MathF.Abs(AngleTo0_360(moveAngle - targetAngle)) < DEG_90 ? MathF.Max(1f, VectLength(move) / 500f) : 0.5f;
+            lastTargetSpoint = targetSpoint;
+        }
+
+        /// <summary>
+        /// Moves the content container by the requested offset, clamping to bounds unless bounce is enabled.
+        /// </summary>
+        /// <param name="off">Requested movement offset in container space.</param>
+        /// <returns>The actual applied movement after bounds checks.</returns>
+        public Vector MoveContainerBy(Vector off)
+        {
+            float targetX = container.x + off.X;
+            float targetY = container.y + off.Y;
+            if (!shouldBounceHorizontally)
+            {
+                targetX = MathF.Min(MathF.Max(-container.width + width, targetX), 0f);
+            }
+            if (!shouldBounceVertically)
+            {
+                targetY = MathF.Min(MathF.Max(-container.height + height, targetY), 0f);
+            }
+            Vector vector = VectSub(Vect(targetX, targetY), Vect(container.x, container.y));
+            container.x = targetX;
+            container.y = targetY;
+            return vector;
+        }
+
+        /// <summary>
+        /// Advances the content container toward a target position at the provided <paramref name="speed"/> for the current frame.
+        /// </summary>
+        /// <param name="tsp">Target position in container space.</param>
+        /// <param name="delta">Elapsed frame time in seconds.</param>
+        /// <param name="speed">Movement speed applied toward the target.</param>
+        public void MoveToPointDeltaSpeed(Vector tsp, float delta, float speed)
+        {
+            Vector v = VectSub(tsp, Vect(container.x, container.y));
+            v = VectNormalize(v);
+            v = VectMult(v, speed);
+            _ = Mover.MoveVariableToTarget(ref container.x, tsp.X, MathF.Abs(v.X), delta);
+            _ = Mover.MoveVariableToTarget(ref container.y, tsp.Y, MathF.Abs(v.Y), delta);
+            targetPoint = tsp;
+            move = vectZero;
+        }
+
+        /// <summary>
+        /// Starts snap-to-point movement by selecting the nearest scroll point in the supplied direction.
+        /// </summary>
+        /// <param name="d">Preferred movement direction used to choose a scroll point.</param>
+        public void StartMovingToSpointInDirection(Vector d)
+        {
+            movingToSpoint = true;
+            targetSpoint = lastTargetSpoint = -1;
+            CalculateNearsetScrollPointInDirection(d);
+        }
+
+        /// <summary>
+        /// Files the drag accumulated since the previous frame as one velocity sample and starts
+        /// a fresh one.
+        /// </summary>
+        /// <param name="delta">Elapsed frame time in seconds that the sample covers.</param>
+        private void CloseVelocitySample(float delta)
+        {
+            velocitySampleDrags[velocitySampleCursor] = pendingDrag;
+            velocitySampleDurations[velocitySampleCursor] = delta;
+            velocitySampleCursor = (velocitySampleCursor + 1) % VelocitySampleCount;
+            pendingDrag = vectZero;
+        }
+
+        /// <summary>Discards the sampled drag history so a new gesture starts from rest.</summary>
+        private void ResetVelocitySamples()
+        {
+            Array.Clear(velocitySampleDrags);
+            Array.Clear(velocitySampleDurations);
+            velocitySampleCursor = 0;
+            pendingDrag = vectZero;
+        }
+
+        /// <summary>
+        /// Averages the sampled drag over the time it took to cover, giving a release speed in
+        /// units per second.
+        /// </summary>
+        /// <returns>Velocity to hand to inertia, or zero if the finger was at rest.</returns>
+        /// <remarks>
+        /// Deliberately measured across several frames rather than from the last pointer event.
+        /// The desktop host samples the mouse once per frame, but the browser host forwards each
+        /// DOM pointer event as it arrives while logic steps at a fixed rate, so a per-event
+        /// reading scaled with the pointer's report rate: the same flick came out at half
+        /// strength on a 120 Hz phone, and a stray pixel of jitter as the finger left the glass
+        /// replaced the whole gesture. Averaging over a window makes the answer depend only on
+        /// how fast the finger actually travelled.
+        ///
+        /// The drag accumulated since the last frame closed is left out on purpose. It is at
+        /// most one frame of travel, and admitting it would mean pairing it with a guessed
+        /// duration - which is exactly how a final stray pixel would creep back in.
+        /// </remarks>
+        private Vector MeasureReleaseVelocity()
+        {
+            Vector travelled = vectZero;
+            float elapsed = 0f;
+            for (int i = 0; i < VelocitySampleCount; i++)
+            {
+                travelled = VectAdd(travelled, velocitySampleDrags[i]);
+                elapsed += velocitySampleDurations[i];
+            }
+
+            return elapsed > 0f ? VectMult(travelled, 1f / elapsed) : vectZero;
+        }
+
+        /// <summary>
+        /// Provides smooth, momentum-based scrolling in response to mouse wheel input.
+        /// </summary>
+        /// <param name="scrollDelta">
+        /// The mouse wheel delta value. Positive values scroll up (content moves down),
+        /// negative values scroll down (content moves up).
+        /// </param>
+        public void HandleMouseWheel(int scrollDelta)
+        {
+            if (container.height <= height)
+            {
+                return; // No scrolling needed if content fits
+            }
+
+            // Inertia decays exponentially, so a starting speed of v travels v/deacceleration
+            // before it stops. Stating the notch as the distance it should cover and solving for
+            // the speed keeps the wheel where it has always been when that constant is retuned.
+            float scrollVelocity = scrollDelta * WheelGlidePerDelta * deaccelerationSpeed;
+
+            // Add to existing momentum for smooth, accumulating scrolling
+            // The Update() method handles deceleration automatically
+            move = VectAdd(move, Vect(0f, scrollVelocity));
+        }
+
+        /// <summary>
+        /// Receives notifications when the active target or reached scroll point changes.
+        /// </summary>
+        public IScrollableContainerProtocol delegateScrollableContainerProtocol;
+
+        /// <summary>
+        /// Sentinel touch position used to mark the absence of an active drag gesture.
+        /// </summary>
+        private static readonly Vector impossibleTouch = new(-1000f, -1000f);
+
+        /// <summary>
+        /// Root content element that is clipped and translated during scrolling.
+        /// </summary>
+        private BaseElement container;
+
+        /// <summary>
+        /// Last touch position used to measure incremental drag movement.
+        /// </summary>
+        private Vector dragStart;
+
+        /// <summary>
+        /// Number of frames of drag history averaged to find the release velocity. Five frames is
+        /// about 83 ms at 60 Hz: long enough to ride out per-event jitter, short enough that only
+        /// the end of the gesture counts.
+        /// </summary>
+        private const int VelocitySampleCount = 5;
+
+        /// <summary>
+        /// Distance one unit of mouse-wheel delta should carry the content.
+        /// </summary>
+        private const float WheelGlidePerDelta = 4f / 7f;
+
+        /// <summary>
+        /// Drag covered during each of the last <see cref="VelocitySampleCount"/> frames.
+        /// </summary>
+        private readonly Vector[] velocitySampleDrags = new Vector[VelocitySampleCount];
+
+        /// <summary>
+        /// Frame duration each entry of <see cref="velocitySampleDrags"/> was measured over.
+        /// </summary>
+        private readonly float[] velocitySampleDurations = new float[VelocitySampleCount];
+
+        /// <summary>
+        /// Next slot to overwrite in the velocity sample ring.
+        /// </summary>
+        private int velocitySampleCursor;
+
+        /// <summary>
+        /// Drag accumulated by pointer events since the current frame's sample opened.
+        /// </summary>
+        private Vector pendingDrag;
+
+        /// <summary>
+        /// Current scrolling velocity used for inertia and mouse-wheel momentum.
+        /// </summary>
+        private Vector move;
+
+        // private bool movingByInertion;
+
+        /// <summary>
+        /// Whether the container is currently animating toward a snap point.
+        /// </summary>
+        private bool movingToSpoint;
+
+        /// <summary>
+        /// Index of the current snap-point target, or <c>-1</c> when no target is active.
+        /// </summary>
+        private int targetSpoint;
+
+        /// <summary>
+        /// Index of the previously selected snap point.
+        /// </summary>
+        private int lastTargetSpoint;
+
+        /// <summary>
+        /// Speed multiplier applied while animating toward the selected snap point.
+        /// </summary>
+        private float spointMoveMultiplier;
+
+        /// <summary>
+        /// Stored snap-point container offsets.
+        /// </summary>
+        private Vector[] spoints;
+
+        /// <summary>
+        /// Allocated capacity of the snap-point storage array.
+        /// </summary>
+        private int spointsCapacity;
+
+        // private Vector spointMoveDirection;
+
+        /// <summary>
+        /// Most recent explicit movement target used by helper movement routines.
+        /// </summary>
+        private Vector targetPoint;
+
+        /// <summary>
+        /// Current touch interaction phase for the container.
+        /// </summary>
+        private TOUCH_STATE touchState;
+
+        /// <summary>
+        /// Remaining delay before touch input is forwarded to child elements.
+        /// </summary>
+        public float touchTimer;
+
+        /// <summary>
+        /// Delay before a deferred child touch-up event is replayed.
+        /// </summary>
+        private float touchReleaseTimer;
+
+        /// <summary>
+        /// Cached touch position used when touch delivery to children is deferred.
+        /// </summary>
+        private Vector savedTouch;
+
+        /// <summary>
+        /// Total drag distance accumulated during the current gesture.
+        /// </summary>
+        private Vector totalDrag;
+
+        /// <summary>
+        /// Whether touch events should currently be forwarded to child elements.
+        /// </summary>
+        public bool passTouches;
+
+        // private float fixedDelta;
+
+        /// <summary>
+        /// Rate at which inertial movement decays, per second. A release at speed <c>v</c> travels
+        /// <c>v / deaccelerationSpeed</c> before it stops.
+        /// </summary>
+        private float deaccelerationSpeed;
+
+        /// <summary>
+        /// Speed below which inertial movement is treated as finished, in units per second.
+        /// </summary>
+        private float minScrollSpeed;
+
+        // private float scrollToPointDuration;
+
+        /// <summary>
+        /// Whether snap selection may skip intermediate scroll points instead of moving point-by-point.
+        /// </summary>
+        private bool canSkipScrollPoints;
+
+        /// <summary>
+        /// Whether horizontal overscroll is allowed and springs back after release.
+        /// </summary>
+        public bool shouldBounceHorizontally;
+
+        /// <summary>
+        /// Whether vertical overscroll is allowed and springs back after release.
+        /// </summary>
+        public bool shouldBounceVertically;
+
+        /// <summary>
+        /// Drag distance required before pending child touches are cancelled and scrolling takes control.
+        /// </summary>
+        public float touchMoveIgnoreLength;
+
+        /// <summary>
+        /// Largest single-event drag delta accepted as real pointer movement. Anything beyond it
+        /// is read as the pointer jumping rather than travelling, and is discarded.
+        /// </summary>
+        private float maxTouchMoveLength;
+
+        /// <summary>
+        /// Delay before touch events are passed through to child elements.
+        /// </summary>
+        private float touchPassTimeout;
+
+        /// <summary>
+        /// Whether <see cref="Show"/> resets the scroll offset to the origin.
+        /// </summary>
+        public bool resetScrollOnShow;
+
+        /// <summary>
+        /// Whether the container stops processing touch-down events already handled by a child.
+        /// </summary>
+        public bool dontHandleTouchDownsHandledByChilds;
+
+        /// <summary>
+        /// Whether the container stops processing touch-move events already handled by a child.
+        /// </summary>
+        public bool dontHandleTouchMovesHandledByChilds;
+
+        /// <summary>
+        /// Whether the container stops processing touch-up events already handled by a child.
+        /// </summary>
+        public bool dontHandleTouchUpsHandledByChilds;
+
+        /// <summary>
+        /// Whether dragging should explicitly cancel touches already delivered to children.
+        /// </summary>
+        private bool untouchChildsOnMove;
+
+        /// <summary>
+        /// Minimum release movement length required to choose a snap target from release direction.
+        /// Use <c>-1</c> to disable the directional threshold.
+        /// </summary>
+        public float minAutoScrollToSpointLength;
+
+        /// <summary>
+        /// Touch interaction states used to track dragging lifecycle.
+        /// </summary>
+        private enum TOUCH_STATE
+        {
+            /// <summary>
+            /// No active touch is being tracked.
+            /// </summary>
+            UP,
+
+            /// <summary>
+            /// A touch has started but has not yet moved.
+            /// </summary>
+            DOWN,
+
+            /// <summary>
+            /// An active touch is dragging the container.
+            /// </summary>
+            MOVING
+        }
+    }
+}

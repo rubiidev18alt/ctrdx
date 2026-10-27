@@ -1,0 +1,177 @@
+name: Release
+
+on:
+    push:
+        tags: ["v*"]
+    workflow_dispatch:
+        inputs:
+            version:
+                description: "Version to build, e.g. 2.30.0"
+                required: true
+                type: string
+    # The prerelease workflow builds through this one, so both publish the same bundles.
+    workflow_call:
+        inputs:
+            version:
+                description: "Version to build, e.g. 1.0.0-prerelease+57"
+                required: true
+                type: string
+
+permissions:
+    contents: read
+
+jobs:
+    version:
+        runs-on: ubuntu-latest
+        outputs:
+            version: ${{ steps.resolve.outputs.version }}
+            prerelease: ${{ steps.resolve.outputs.prerelease }}
+        steps:
+            # Tag pushes carry a leading "v" the scripts must not receive; dispatch and
+            # called runs supply the bare version already. Releases are X.Y.Z; a CI
+            # prerelease is X.Y.Z-prerelease+<run number>.
+            - id: resolve
+              env:
+                  INPUT_VERSION: ${{ inputs.version }}
+              run: |
+                  if [ -n "$INPUT_VERSION" ]; then
+                      version="$INPUT_VERSION"
+                  else
+                      version="${GITHUB_REF_NAME#v}"
+                  fi
+                  if ! echo "$version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-prerelease\+[0-9]+)?$'; then
+                      echo "::error::'$version' is not X.Y.Z or X.Y.Z-prerelease+N"
+                      exit 1
+                  fi
+                  case "$version" in
+                      *-prerelease*) prerelease=true ;;
+                      *) prerelease=false ;;
+                  esac
+                  echo "version=$version" >> "$GITHUB_OUTPUT"
+                  echo "prerelease=$prerelease" >> "$GITHUB_OUTPUT"
+
+    # The raw asset download is shared with the Pages deploy, so both agree on what "the
+    # assets" are and neither re-implements the fetch. It runs once here to fill the cache
+    # the three packaging jobs restore from; none of them needs it to have succeeded, since
+    # the build fetches whatever is still missing.
+    assets:
+        uses: ./.github/workflows/content.yml
+
+    windows:
+        needs: [version, assets]
+        runs-on: windows-latest
+        steps:
+            - uses: actions/checkout@v7
+            - uses: ./.github/actions/setup-dotnet
+
+            # The publish deploys content straight from content/, and fetches anything
+            # missing on its own. Restoring what the assets job already downloaded is
+            # purely to skip that download; a miss costs time, not correctness.
+            - name: Restore fetched assets
+              uses: actions/cache/restore@v6
+              with:
+                  path: ${{ needs.assets.outputs.cache-path }}
+                  key: ${{ needs.assets.outputs.cache-key }}
+                  enableCrossOsArchive: true
+
+            - run: python distribution/release_windows.py "${{ needs.version.outputs.version }}"
+
+            - uses: actions/upload-artifact@v7
+              with:
+                  name: bundle-windows
+                  path: src/CutTheRopeDX.Desktop/bin/release_github/*.7z
+                  compression-level: 0
+                  retention-days: 7
+
+    macos:
+        needs: [version, assets]
+        runs-on: macos-latest
+        steps:
+            - uses: actions/checkout@v7
+            - uses: ./.github/actions/setup-dotnet
+
+            # Pinned because each macOS workload release binds the newest Apple SDK, and the
+            # trimmer fails (MT4162) when the runner's default Xcode is older than that SDK.
+            # Bump this together with a runner image whose default Xcode matches.
+            - name: Install macOS workload
+              run: dotnet workload install macos --version 10.0.401
+
+            # The publish deploys content straight from content/, and fetches anything
+            # missing on its own. Restoring what the assets job already downloaded is
+            # purely to skip that download; a miss costs time, not correctness.
+            - name: Restore fetched assets
+              uses: actions/cache/restore@v6
+              with:
+                  path: ${{ needs.assets.outputs.cache-path }}
+                  key: ${{ needs.assets.outputs.cache-key }}
+                  enableCrossOsArchive: true
+
+            # bundle_ffmpeg_macos.sh copies the dylibs out of Homebrew's ffmpeg. The major is
+            # pinned because FFmpeg.AutoGen resolves functions by soname, so a runner that had
+            # moved on to the next FFmpeg would ship a bundle with no working video decoder.
+            - run: brew install ffmpeg@9
+
+            - name: Build ffmpeg DMG
+              env:
+                  USE_AOT: "true"
+              run: ./distribution/bundle_macos.sh "${{ needs.version.outputs.version }}"
+
+            - name: Build AVFoundation DMG
+              run: python3 distribution/release_macos_tahoe.py "${{ needs.version.outputs.version }}"
+
+            - uses: actions/upload-artifact@v7
+              with:
+                  name: bundle-macos
+                  path: src/CutTheRopeDX.Desktop/bin/release_github/*.dmg
+                  compression-level: 0
+                  retention-days: 7
+
+    linux:
+        needs: [version, assets]
+        runs-on: ubuntu-latest
+        steps:
+            - uses: actions/checkout@v7
+            - uses: ./.github/actions/setup-dotnet
+
+            # The publish deploys content straight from content/, and fetches anything
+            # missing on its own. Restoring what the assets job already downloaded is
+            # purely to skip that download; a miss costs time, not correctness.
+            - name: Restore fetched assets
+              uses: actions/cache/restore@v6
+              with:
+                  path: ${{ needs.assets.outputs.cache-path }}
+                  key: ${{ needs.assets.outputs.cache-key }}
+                  enableCrossOsArchive: true
+
+            - run: ./distribution/build_appimage.sh "${{ needs.version.outputs.version }}"
+
+            - uses: actions/upload-artifact@v7
+              with:
+                  name: bundle-linux
+                  path: src/CutTheRopeDX.Desktop/bin/release_github/*.AppImage
+                  compression-level: 0
+                  retention-days: 7
+
+    release:
+        needs: [version, windows, macos, linux]
+        runs-on: ubuntu-latest
+        permissions:
+            contents: write
+        steps:
+            - uses: actions/download-artifact@v8
+              with:
+                  pattern: bundle-*
+                  path: artifacts
+                  merge-multiple: true
+
+            - uses: softprops/action-gh-release@v3
+              with:
+                  tag_name: v${{ needs.version.outputs.version }}
+                  name: v${{ needs.version.outputs.version }}
+                  # A dispatched or prerelease run has no tag yet; pin the one it creates to
+                  # the commit that was built rather than the default branch's head.
+                  target_commitish: ${{ github.sha }}
+                  prerelease: ${{ needs.version.outputs.prerelease == 'true' }}
+                  make_latest: ${{ needs.version.outputs.prerelease == 'true' && 'false' || 'true' }}
+                  files: artifacts/*
+                  generate_release_notes: true

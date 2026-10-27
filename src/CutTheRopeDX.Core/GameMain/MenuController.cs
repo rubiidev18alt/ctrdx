@@ -1,0 +1,2758 @@
+using System;
+using System.Collections.Generic;
+using System.Globalization;
+
+using CutTheRopeDX.Commons;
+using CutTheRopeDX.Framework;
+using CutTheRopeDX.Framework.Core;
+using CutTheRopeDX.Framework.Helpers;
+using CutTheRopeDX.Framework.Media;
+using CutTheRopeDX.Framework.Platform;
+using CutTheRopeDX.Framework.Visual;
+using CutTheRopeDX.Helpers;
+
+namespace CutTheRopeDX.GameMain
+{
+    /// <summary>
+    /// Main menu controller that builds menu views, handles menu buttons, and coordinates transitions into gameplay.
+    /// </summary>
+    internal sealed partial class MenuController : ViewController, IButtonDelegation, IMovieMgrDelegate, IScrollableContainerProtocol, ITimelineDelegate
+    {
+        /// <summary>
+        /// Creates a full-width text button using the standard menu button quads.
+        /// </summary>
+        /// <param name="str">Button label text.</param>
+        /// <param name="bid">Button identifier assigned to the created button.</param>
+        /// <param name="d">Button delegate that receives press events.</param>
+        /// <returns>The configured menu button.</returns>
+        public static Button CreateButtonWithTextIDDelegate(string str, ButtonId bid, IButtonDelegation d)
+        {
+            Image upImage = Image.FromResource(Resources.Img.MenuButtons, 0);
+            Image downImage = Image.FromResource(Resources.Img.MenuButtons, 1);
+            FontGeneric font = Application.GetFont(Resources.Fnt.BigFont);
+            Text upLabel = new Text().InitWithFont(font);
+            upLabel.SetString(str);
+            Text downLabel = new Text().InitWithFont(font);
+            downLabel.SetString(str);
+            upLabel.anchor = upLabel.parentAnchor = 18;
+            downLabel.anchor = downLabel.parentAnchor = 18;
+            upLabel.pingPongEnabled = true;
+            downLabel.pingPongEnabled = true;
+            _ = upImage.AddChild(upLabel);
+            _ = downImage.AddChild(downLabel);
+            Button button = new Button().InitWithUpElementDownElementandID(upImage, downImage, bid);
+            button.SetTouchIncreaseLeftRightTopBottom(15, 15, 15, 15);
+            button.delegateButtonDelegate = d;
+            return button;
+        }
+
+        /// <summary>
+        /// Creates a shorter text button, optionally rendering it in the selected state.
+        /// </summary>
+        /// <param name="str">Button label text.</param>
+        /// <param name="bid">Button identifier assigned to the created button.</param>
+        /// <param name="d">Button delegate that receives press events.</param>
+        /// <param name="selected">Whether the button should render with its selected-state quads.</param>
+        /// <returns>The configured short menu button.</returns>
+        public static Button CreateShortButtonWithTextIDDelegate(string str, ButtonId bid, IButtonDelegation d, bool selected = false)
+        {
+            // When selected, swap quads so the "down" look is the default state
+            int upQuad = selected ? 2 : 3;
+            int downQuad = selected ? 3 : 2;
+            Image upImage = Image.FromResource(Resources.Img.MenuButtons, upQuad);
+            Image downImage = Image.FromResource(Resources.Img.MenuButtons, downQuad);
+            FontGeneric font = Application.GetFont(Resources.Fnt.BigFont);
+            Text upLabel = new Text().InitWithFont(font);
+            upLabel.SetString(str);
+            Text downLabel = new Text().InitWithFont(font);
+            downLabel.SetString(str);
+            upLabel.anchor = upLabel.parentAnchor = 18;
+            downLabel.anchor = downLabel.parentAnchor = 18;
+            upLabel.pingPongEnabled = true;
+            downLabel.pingPongEnabled = true;
+            _ = upImage.AddChild(upLabel);
+            _ = downImage.AddChild(downLabel);
+            Button button = new Button().InitWithUpElementDownElementandID(upImage, downImage, bid);
+            button.SetTouchIncreaseLeftRightTopBottom(15, 15, 15, 15);
+            button.delegateButtonDelegate = d;
+            return button;
+        }
+
+        /// <summary>
+        /// Creates a two-state text toggle button using the standard menu button quads.
+        /// </summary>
+        /// <param name="str1">Label text for the first toggle state.</param>
+        /// <param name="str2">Label text for the second toggle state.</param>
+        /// <param name="bid">Button identifier assigned to the created toggle.</param>
+        /// <param name="d">Button delegate that receives press events.</param>
+        /// <returns>The configured toggle button.</returns>
+        public static ToggleButton CreateToggleButtonWithText1Text2IDDelegate(string str1, string str2, ButtonId bid, IButtonDelegation d)
+        {
+            Image state1Up = Image.FromResource(Resources.Img.MenuButtons, 0);
+            Image state1Down = Image.FromResource(Resources.Img.MenuButtons, 1);
+            Image state2Up = Image.FromResource(Resources.Img.MenuButtons, 0);
+            Image state2Down = Image.FromResource(Resources.Img.MenuButtons, 1);
+            FontGeneric font = Application.GetFont(Resources.Fnt.BigFont);
+            Text state1UpLabel = new Text().InitWithFont(font);
+            state1UpLabel.SetString(str1);
+            Text state1DownLabel = new Text().InitWithFont(font);
+            state1DownLabel.SetString(str1);
+            Text state2UpLabel = new Text().InitWithFont(font);
+            state2UpLabel.SetString(str2);
+            Text state2DownLabel = new Text().InitWithFont(font);
+            state2DownLabel.SetString(str2);
+            state1UpLabel.anchor = state1UpLabel.parentAnchor = 18;
+            state1DownLabel.anchor = state1DownLabel.parentAnchor = 18;
+            state2UpLabel.anchor = state2UpLabel.parentAnchor = 18;
+            state2DownLabel.anchor = state2DownLabel.parentAnchor = 18;
+            state1UpLabel.pingPongEnabled = true;
+            state1DownLabel.pingPongEnabled = true;
+            state2UpLabel.pingPongEnabled = true;
+            state2DownLabel.pingPongEnabled = true;
+            _ = state1Up.AddChild(state1UpLabel);
+            _ = state1Down.AddChild(state1DownLabel);
+            _ = state2Up.AddChild(state2UpLabel);
+            _ = state2Down.AddChild(state2DownLabel);
+            ToggleButton toggleButton = new ToggleButton().InitWithUpElement1DownElement1UpElement2DownElement2andID(state1Up, state1Down, state2Up, state2Down, bid);
+            toggleButton.SetTouchIncreaseLeftRightTopBottom(10, 10, 10, 10);
+            toggleButton.delegateButtonDelegate = d;
+            return toggleButton;
+        }
+
+        /// <summary>
+        /// Creates the standard back button.
+        /// </summary>
+        /// <param name="d">Button delegate that receives press events.</param>
+        /// <param name="bid">Button identifier assigned to the back button.</param>
+        /// <returns>The configured back button.</returns>
+        public static Button CreateBackButtonWithDelegateID(IButtonDelegation d, ButtonId bid)
+        {
+            Button button = CreateButtonWithImageQuad1Quad2IDDelegate(Resources.Img.MenuExtraButtons, 0, 1, bid, d);
+            button.anchor = button.parentAnchor = 33;
+            return button;
+        }
+
+        /// <summary>
+        /// Creates an image button from a texture resource.
+        /// </summary>
+        /// <param name="resourceName">Texture resource name for the button image.</param>
+        /// <param name="bid">Button identifier assigned to the created button.</param>
+        /// <param name="d">Button delegate that receives press events.</param>
+        /// <returns>The configured image button.</returns>
+        public static Button CreateButtonWithImageIDDelegate(string resourceName, ButtonId bid, IButtonDelegation d)
+        {
+            Texture2D texture = Application.GetTexture(resourceName);
+            Image up = Image.FromTexture(texture);
+            Image image = Image.FromTexture(texture);
+            image.scaleX = 1.2f;
+            image.scaleY = 1.2f;
+            Button button = new Button().InitWithUpElementDownElementandID(up, image, bid);
+            button.SetTouchIncreaseLeftRightTopBottom(10, 10, 10, 10);
+            button.delegateButtonDelegate = d;
+            return button;
+        }
+
+        /// <summary>
+        /// Creates an image button whose down-state quad is position-adjusted relative to the up-state quad.
+        /// </summary>
+        /// <param name="resourceName">Texture resource name containing both quads.</param>
+        /// <param name="q1">Up-state quad index.</param>
+        /// <param name="q2">Down-state quad index.</param>
+        /// <param name="bid">Button identifier assigned to the created button.</param>
+        /// <param name="d">Button delegate that receives press events.</param>
+        /// <returns>The configured image button.</returns>
+        public static Button CreateButton2WithImageQuad1Quad2IDDelegate(string resourceName, int q1, int q2, ButtonId bid, IButtonDelegation d)
+        {
+            Image up = Image.FromResource(resourceName, q1);
+            Image image = Image.FromResource(resourceName, q2);
+            Vector relativeQuadOffset = Image.GetRelativeQuadOffset(resourceName, q2, q1);
+            image.x -= relativeQuadOffset.X;
+            image.y -= relativeQuadOffset.Y;
+            Button button = new Button().InitWithUpElementDownElementandID(up, image, bid);
+            button.delegateButtonDelegate = d;
+            return button;
+        }
+
+        /// <summary>
+        /// Creates an image button from explicit up and down quad indices.
+        /// </summary>
+        /// <param name="resourceName">Texture resource name containing both quads.</param>
+        /// <param name="q1">Up-state quad index.</param>
+        /// <param name="q2">Down-state quad index.</param>
+        /// <param name="bid">Button identifier assigned to the created button.</param>
+        /// <param name="d">Button delegate that receives press events.</param>
+        /// <returns>The configured image button.</returns>
+        public static Button CreateButtonWithImageQuad1Quad2IDDelegate(string resourceName, int q1, int q2, ButtonId bid, IButtonDelegation d)
+        {
+            Image upImage = Image.FromResource(resourceName, q1);
+            Image downImage = Image.FromResource(resourceName, q2);
+            Button button = new Button().InitWithUpElementDownElementandID(upImage, downImage, bid);
+            button.delegateButtonDelegate = d;
+            Texture2D texture = Application.GetTexture(resourceName);
+            button.ForceTouchRect(MakeRectangle(texture.quadOffsets[q1].X, texture.quadOffsets[q1].Y, texture.quadRects[q1].w, texture.quadRects[q1].h));
+            return button;
+        }
+
+        /// <summary>
+        /// Creates an image button that reuses one quad for both button states.
+        /// </summary>
+        /// <param name="resourceName">Texture resource name containing the quad.</param>
+        /// <param name="quad">Quad index used by the button states.</param>
+        /// <param name="bid">Raw button identifier assigned to the created button.</param>
+        /// <param name="d">Button delegate that receives press events.</param>
+        /// <returns>The configured image button.</returns>
+        public static Button CreateButtonWithImageQuadIDDelegate(string resourceName, int quad, int bid, IButtonDelegation d)
+        {
+            Image up = Image.FromResource(resourceName, quad);
+            up.color.AlphaChannel = 0.6f;
+            Image down = Image.FromResource(resourceName, quad);
+            Button button = new Button().InitWithUpElementDownElementandID(up, down, bid);
+            button.delegateButtonDelegate = d;
+            Texture2D texture = Application.GetTexture(resourceName);
+            button.ForceTouchRect(MakeRectangle(texture.quadOffsets[quad].X, texture.quadOffsets[quad].Y, texture.quadRects[quad].w, texture.quadRects[quad].h));
+            return button;
+        }
+
+        /// <summary>
+        /// Creates the menu background with optional logo and rotating shadow layer.
+        /// </summary>
+        /// <param name="l">Whether to include the menu logo and logo candy button.</param>
+        /// <param name="s">Whether to include the rotating shadow layer.</param>
+        /// <param name="viewId">View the backdrop belongs to, so a layout pass can find it again.</param>
+        /// <param name="designGroup">
+        /// Group carrying the scene's design-space content, or <see langword="null"/> for a scene
+        /// that has not been converted to one. When supplied, the logo is placed in it rather than
+        /// on the backdrop, and it is hung from the backdrop above the decorative layers.
+        /// </param>
+        /// <returns>The configured background element.</returns>
+        public BaseElement CreateBackgroundWithLogowithShadow(
+            bool l,
+            bool s,
+            int viewId,
+            BaseElement designGroup = null)
+        {
+            BaseElement baseElement = new()
+            {
+                width = (int)VisibleBounds.w,
+                height = (int)VisibleBounds.h
+            };
+
+            // Select secondary background based on special events
+            string backgroundResource;
+            int backgroundQuad;
+            switch (true)
+            {
+                case var _ when MenuTheme.IsExperiments:
+                    // A background image: one whole texture, so no quad to pick.
+                    backgroundResource = ExperimentsBackdropFor(l, viewId);
+                    backgroundQuad = -1;
+                    break;
+                case var _ when SpecialEvents.IsXmas:
+                    backgroundResource = Resources.Img.MenuBgrXmas;
+                    backgroundQuad = 0;
+                    break;
+                case var _ when SpecialEvents.IsHalloween:
+                    backgroundResource = Resources.Img.MenuBgrHalloween;
+                    backgroundQuad = 0;
+                    break;
+                default:
+                    backgroundResource = Resources.Img.MenuBgr;
+                    backgroundQuad = 0;
+                    break;
+            }
+
+            Image image = Image.FromResource(backgroundResource, backgroundQuad);
+            image.anchor = image.parentAnchor = 34;
+            image.scaleX = image.scaleY = 1.25f;
+            image.rotationCenterY = image.height / 2;
+            image.passTransformationsToChilds = false;
+            _ = baseElement.AddChild(image);
+            if (SpecialEvents.IsHalloween && !MenuTheme.IsExperiments)
+            {
+                AddHalloweenDecorations(baseElement, mainMenu: l);
+            }
+            Image frontLayer = null;
+            Image shadowLayer = null;
+            if (l)
+            {
+                // Select main background based on special events
+                string backgroundSecondaryResource;
+                int backgroundSecondaryQuad;
+                switch (true)
+                {
+                    case var _ when SpecialEvents.IsXmas:
+                        backgroundSecondaryResource = Resources.Img.MenuBgrXmas;
+                        backgroundSecondaryQuad = 1;
+                        break;
+                    case var _ when SpecialEvents.IsHalloween:
+                        backgroundSecondaryResource = Resources.Img.MenuBgrHalloween;
+                        backgroundSecondaryQuad = 1;
+                        break;
+                    default:
+                        backgroundSecondaryResource = Resources.Img.MenuBgr;
+                        backgroundSecondaryQuad = 1;
+                        break;
+                }
+
+                // The Experiments backdrops are painted whole, with no separate front half.
+                if (!MenuTheme.IsExperiments)
+                {
+                    Image secondaryBackground = Image.FromResource(backgroundSecondaryResource, backgroundSecondaryQuad);
+                    secondaryBackground.anchor = secondaryBackground.parentAnchor = 34;
+                    secondaryBackground.scaleX = secondaryBackground.scaleY = 1.25f;
+                    secondaryBackground.passTransformationsToChilds = false;
+                    secondaryBackground.rotationCenterY = secondaryBackground.height / 2;
+                    _ = image.AddChild(secondaryBackground);
+                    frontLayer = secondaryBackground;
+                }
+
+                // Add event-specific decorations to logo -- layer bottom
+                switch (true)
+                {
+                    case var _ when SpecialEvents.IsXmas:
+                        // Hat background layer (behind the logo) - add to baseElement before logo
+                        Image hatBackground = Image.FromResource(Resources.Img.MenuLogoXmasHat, 0);
+                        hatBackground.anchor = 9;  // Top-left of the hat sprite
+                        hatBackground.parentAnchor = 9;  // Relative to top-left of base (no positioning limits)
+                        hatBackground.x = 965f;  // Adjust horizontal position (positive = right)
+                        hatBackground.y = 71f;  // Adjust vertical position (positive = down)
+                        _ = baseElement.AddChild(hatBackground);
+                        break;
+                    default:
+                        break;
+                }
+
+                // Main logo
+                // The logo is design-space content: it belongs to the fitted group where the scene
+                // has one, and to the backdrop where it does not.
+                BaseElement logoParent = designGroup ?? baseElement;
+                Image logo = Image.FromResource(Resources.Img.MenuLogoNew, 52);
+                logo.anchor = 10;
+                logo.parentAnchor = 10;
+                logo.y = 55f;
+
+                // Candy on rope (positioned under the logo)
+                // Get selected candy skin from preferences (0-50 for candy_01 to candy_51)
+                int selectedCandySkin = Preferences.GetIntForKey("PREFS_SELECTED_CANDY");
+                Image candyUp = Image.FromResource(Resources.Img.MenuLogoNew, selectedCandySkin);
+                Image candyDown = Image.FromResource(Resources.Img.MenuLogoNew, selectedCandySkin);
+                candyDown.scaleX = candyDown.scaleY = 0.95f;  // Slight press feedback
+                Button candyButton = new Button().InitWithUpElementDownElementandID(candyUp, candyDown, MenuButtonId.CandySelect);
+                candyButton.SetName("logoCandyButton");
+                candyButton.delegateButtonDelegate = this;
+                candyButton.anchor = candyButton.parentAnchor = 10;  // Top-center of logo
+                candyButton.x = 143f;  // Offset right from center
+                candyButton.y = 490f;  // Offset down from top of logo
+                candyButton.SetTouchIncreaseLeftRightTopBottom(40f, 40f, 40f, 40f);
+                _ = logo.AddChild(candyButton);
+
+                // Check if tutorial has been completed
+                bool showCandyTutorial = !Preferences.GetBooleanForKey("PREFS_CANDY_WAS_CHANGED");
+
+                if (showCandyTutorial)
+                {
+                    // Glow effect - pulsing animation (shrink/expand rapidly, pause, repeat)
+                    /*
+                    Image glowImage = Image.FromResource(Resources.Img.CandySelectionFx, 0);
+                    glowImage.x = -25f;
+                    glowImage.y = -25f;
+                    Timeline glowTimeline = new Timeline().InitWithMaxKeyFramesOnTrack(6);
+                    // Rapid pulse: normal -> shrink -> expand -> shrink -> normal, then pause
+                    glowTimeline.AddKeyFrame(KeyFrame.MakeScale(1, 1, KeyFrame.TransitionType.FRAME_TRANSITION_LINEAR, 0));
+                    glowTimeline.AddKeyFrame(KeyFrame.MakeScale(0.85, 0.85, KeyFrame.TransitionType.FRAME_TRANSITION_EASE_OUT, 0.3));
+                    glowTimeline.AddKeyFrame(KeyFrame.MakeScale(1.15, 1.15, KeyFrame.TransitionType.FRAME_TRANSITION_EASE_IN, 0.3));
+                    glowTimeline.AddKeyFrame(KeyFrame.MakeScale(0.85, 0.85, KeyFrame.TransitionType.FRAME_TRANSITION_EASE_OUT, 0.3));
+                    glowTimeline.AddKeyFrame(KeyFrame.MakeScale(1, 1, KeyFrame.TransitionType.FRAME_TRANSITION_EASE_IN, 0.3));
+                    glowTimeline.AddKeyFrame(KeyFrame.MakeScale(1, 1, KeyFrame.TransitionType.FRAME_TRANSITION_LINEAR, 1));  // Pause
+                    glowTimeline.SetTimelineLoopType(Timeline.LoopType.TIMELINE_REPLAY);
+                    _ = glowImage.AddTimeline(glowTimeline);
+                    glowImage.PlayTimeline(0);
+                    _ = candyButton.AddChild(glowImage);
+                    */
+
+                    // Pointing hand indicator
+                    Image handImage = Image.FromResource(Resources.Img.CandySelectionFx, 1);
+                    // Hand pointing animation - horizontal jabbing/pointing motion
+                    // Keep y constant for horizontal movement only
+                    Timeline handTimeline = new Timeline().InitWithMaxKeyFramesOnTrack(3);
+                    handTimeline.AddKeyFrame(KeyFrame.MakePos(200, 70, KeyFrame.TransitionType.FRAME_TRANSITION_EASE_OUT, 0));
+                    handTimeline.AddKeyFrame(KeyFrame.MakePos(180, 70, KeyFrame.TransitionType.FRAME_TRANSITION_EASE_IN, 0.6f));  // Move LEFT (toward candy)
+                    handTimeline.AddKeyFrame(KeyFrame.MakePos(200, 70, KeyFrame.TransitionType.FRAME_TRANSITION_EASE_OUT, 0.6f));
+                    handTimeline.SetTimelineLoopType(Timeline.LoopType.TIMELINE_REPLAY);
+                    _ = handImage.AddTimeline(handTimeline);
+                    handImage.PlayTimeline(0);
+                    _ = candyButton.AddChild(handImage);
+                }
+
+                // Add event-specific decorations to logo -- layer top
+                switch (true)
+                {
+                    case var _ when SpecialEvents.IsXmas:
+                        // Hat foreground layer (on top of the text logo)
+                        Image hatForeground = Image.FromResource(Resources.Img.MenuLogoXmasHat, 1);
+                        hatForeground.anchor = 9;  // Top-left of the hat sprite
+                        hatForeground.parentAnchor = 9;  // Relative to top-left of logo
+                        hatForeground.x = 30f;  // Adjust horizontal position (positive = right)
+                        hatForeground.y = -80f;  // Adjust vertical position (positive = down)
+                        _ = logo.AddChild(hatForeground);
+                        break;
+                    case var _ when SpecialEvents.IsHalloween:
+                        AddHalloweenLogoHat(logoParent, logo);
+                        break;
+                    default:
+                        break;
+                }
+
+                _ = logoParent.AddChild(logo);
+
+            }
+            if (s)
+            {
+                Image shadowImage = Image.FromResource(Resources.Img.MenuBgrShadow, 0);
+                shadowImage.anchor = shadowImage.parentAnchor = 18;
+                shadowImage.scaleX = shadowImage.scaleY = 2f;
+                Timeline timeline = new Timeline().InitWithMaxKeyFramesOnTrack(3);
+                timeline.AddKeyFrame(KeyFrame.MakeRotation(45, KeyFrame.TransitionType.FRAME_TRANSITION_LINEAR, 0));
+                timeline.AddKeyFrame(KeyFrame.MakeRotation(405, KeyFrame.TransitionType.FRAME_TRANSITION_LINEAR, 75));
+                timeline.SetTimelineLoopType(Timeline.LoopType.TIMELINE_REPLAY);
+                _ = shadowImage.AddTimeline(timeline);
+                shadowImage.PlayTimeline(0);
+                _ = baseElement.AddChild(shadowImage);
+                shadowLayer = shadowImage;
+            }
+
+            // Added last, so the scene's content draws over the decorative layers rather than
+            // being split across them the way it was when the two shared one parent.
+            if (designGroup != null)
+            {
+                _ = baseElement.AddChild(designGroup);
+            }
+            MenuBackdrop backdrop = new(baseElement, image, frontLayer, shadowLayer);
+            backdrops[viewId] = backdrop;
+
+            // Covered here as well as in the layout pass, because a scene can be built at a shape
+            // no later pass will announce a change from: the pack picker rebuilds itself from
+            // inside one, and the authored scale it would otherwise keep covers the design shape
+            // alone - on a phone it left the top half of the screen black.
+            LayOutBackdrop(backdrop, VisibleBounds);
+            return baseElement;
+        }
+
+        /// <summary>
+        /// Creates the menu background with an optional logo and the default shadow layer.
+        /// </summary>
+        /// <param name="l">Whether to include the menu logo and logo candy button.</param>
+        /// <param name="viewId">View the backdrop belongs to, so a layout pass can find it again.</param>
+        /// <param name="designGroup">Group carrying the scene's design-space content, if it has one.</param>
+        /// <returns>The configured background element.</returns>
+        public BaseElement CreateBackgroundWithLogo(bool l, int viewId, BaseElement designGroup = null)
+        {
+            return CreateBackgroundWithLogowithShadow(l, true, viewId, designGroup);
+        }
+
+        /// <summary>
+        /// Creates an audio option element for a specific icon quad and toggle state.
+        /// </summary>
+        /// <param name="q">Audio icon quad index.</param>
+        /// <param name="b">Whether to draw the disabled cross overlay.</param>
+        /// <param name="p">Whether to use the pressed-state background quad.</param>
+        /// <returns>The configured audio option image.</returns>
+        public static Image CreateAudioElementForQuadwithCrosspressediconOffset(int q, bool b, bool p)
+        {
+            if (MenuTheme.IsExperiments)
+            {
+                return CreateExperimentsAudioElement(ExperimentsAudioIcon(q), b, p);
+            }
+
+            int pressedStateQuad = p ? 1 : 0;
+            Image background = Image.FromResource(Resources.Img.MenuOptions, pressedStateQuad);
+            Image icon = Image.FromResource(Resources.Img.MenuOptions, q);
+            icon.parentAnchor = icon.anchor = 9;
+            icon.x = (background.width - icon.width) / 2f;
+            icon.y = (background.height - icon.height) / 2f;
+            _ = background.AddChild(icon);
+            if (b)
+            {
+                icon.color = RGBAColor.MakeRGBA(0.5f, 0.5f, 0.5f, 0.5f);
+                Image cross = Image.FromResource(Resources.Img.MenuOptions, 4);
+                cross.parentAnchor = cross.anchor = 9;
+                cross.x = icon.x + icon.width - (cross.width / 2f);
+                cross.y = icon.y + icon.height - cross.height;
+                _ = background.AddChild(cross);
+            }
+            return background;
+        }
+
+        /// <summary>
+        /// Creates a toggle button for an audio option.
+        /// </summary>
+        /// <param name="q">Audio icon quad index.</param>
+        /// <param name="delegateValue">Button delegate that receives press events.</param>
+        /// <param name="bid">Button identifier assigned to the created toggle.</param>
+        /// <returns>The configured audio toggle button.</returns>
+        public static ToggleButton CreateAudioButtonWithQuadDelegateIDiconOffset(int q, IButtonDelegation delegateValue, ButtonId bid)
+        {
+            Image onUp = CreateAudioElementForQuadwithCrosspressediconOffset(q, false, false);
+            Image onDown = CreateAudioElementForQuadwithCrosspressediconOffset(q, false, true);
+            Image offUp = CreateAudioElementForQuadwithCrosspressediconOffset(q, true, false);
+            Image offDown = CreateAudioElementForQuadwithCrosspressediconOffset(q, true, true);
+            ToggleButton toggleButton = new ToggleButton().InitWithUpElement1DownElement1UpElement2DownElement2andID(onUp, onDown, offUp, offDown, bid);
+            toggleButton.delegateButtonDelegate = delegateValue;
+            return toggleButton;
+        }
+
+        /// <summary>
+        /// Creates an image element for a resource quad, or an empty element when no valid quad is provided.
+        /// </summary>
+        /// <param name="resourceName">Texture resource name.</param>
+        /// <param name="quad">Quad index to create, or -1 for an empty element.</param>
+        /// <returns>The created image or empty element.</returns>
+        public static BaseElement CreateElementWithResIdquad(string resourceName, int quad)
+        {
+            return !string.IsNullOrEmpty(resourceName) && quad != -1 ? Image.FromResource(resourceName, quad) : new BaseElement();
+        }
+
+        /// <summary>
+        /// Creates a toggle button from two resource quads.
+        /// </summary>
+        /// <param name="resourceName">Texture resource name containing both quads.</param>
+        /// <param name="quad">First toggle-state quad index.</param>
+        /// <param name="quad2">Second toggle-state quad index.</param>
+        /// <param name="bId">Raw button identifier assigned to the created toggle.</param>
+        /// <param name="delegateValue">Button delegate that receives press events.</param>
+        /// <returns>The configured toggle button.</returns>
+        public static ToggleButton CreateToggleButtonWithResquadquad2buttonIDdelegate(string resourceName, int quad, int quad2, int bId, IButtonDelegation delegateValue)
+        {
+            BaseElement state1Up = CreateElementWithResIdquad(resourceName, quad);
+            BaseElement state1Down = CreateElementWithResIdquad(resourceName, quad);
+            BaseElement state2Up = CreateElementWithResIdquad(resourceName, quad2);
+            BaseElement state2Down = CreateElementWithResIdquad(resourceName, quad2);
+            int width = Math.Max(state1Up.width, state2Up.width);
+            int height = Math.Max(state1Up.height, state2Up.height);
+            state1Up.width = state1Down.width = width;
+            state1Up.height = state1Down.height = height;
+            state2Up.width = state2Down.width = width;
+            state2Up.height = state2Down.height = height;
+            state1Down.scaleX = state1Down.scaleY = state2Down.scaleX = state2Down.scaleY = 1.2f;
+            ToggleButton toggleButton = new ToggleButton().InitWithUpElement1DownElement1UpElement2DownElement2andID(state1Up, state1Down, state2Up, state2Down, bId);
+            toggleButton.delegateButtonDelegate = delegateValue;
+            return toggleButton;
+        }
+
+        /// <summary>
+        /// Adds the seasonal snowfall overlay to a menu view when the event is enabled.
+        /// </summary>
+        /// <param name="menuView">View that should receive the overlay.</param>
+        private static void AttachSnowfallOverlay(View menuView)
+        {
+            SnowfallOverlay overlay = SnowfallOverlay.CreateIfEnabled();
+            if (overlay != null)
+            {
+                overlay.anchor = overlay.parentAnchor = 9;
+                overlay.Start();
+                _ = menuView.AddChild(overlay);
+            }
+        }
+
+        /// <summary>
+        /// Creates a control illustration with a label and either a check toggle or fixed check mark.
+        /// </summary>
+        /// <param name="q">Illustration quad index in the menu options texture.</param>
+        /// <param name="str">Label text shown under the illustration.</param>
+        /// <param name="bId">Raw button identifier for the toggle, or -1 for a non-interactive check mark.</param>
+        /// <param name="delegateValue">Button delegate that receives toggle events.</param>
+        /// <returns>The configured control option element.</returns>
+        public static BaseElement CreateControlButtontitleAnchortextbuttonIDdelegate(int q, string str, int bId, IButtonDelegation delegateValue)
+        {
+            Image image = Image.FromResource(Resources.Img.MenuOptions, q);
+            int illustrationHeight = image.height;
+            image.height = illustrationHeight + 140;
+            Text text = Text.CreateWithFontandString(Resources.Fnt.SmallFont, str);
+            text.parentAnchor = 9;
+            text.anchor = 18;
+            text.scaleX = text.scaleY = 0.75f;
+            text.SetAlignment(2);
+            _ = image.AddChild(text);
+            text.x = image.width / 2f;
+            FontGeneric font = Application.GetFont(Resources.Fnt.SmallFont);
+            float singleLineHeight = (font.FontHeight() + font.GetTopSpacing()) * text.scaleY;
+            float extraTextHeight = (text.height * text.scaleY) - singleLineHeight;
+            text.y = illustrationHeight + 37 + (extraTextHeight > 0 ? 10 : 0);
+            if (extraTextHeight > 0)
+            {
+                image.height = illustrationHeight + 140 + (int)extraTextHeight;
+            }
+            float checkY = illustrationHeight + 75 + extraTextHeight;
+            if (bId != -1)
+            {
+                ToggleButton toggleButton = CreateToggleButtonWithResquadquad2buttonIDdelegate(Resources.Img.MenuOptions, -1, 8, bId, delegateValue);
+                toggleButton.SetName("button");
+                toggleButton.parentAnchor = 9;
+                toggleButton.x = (image.width - toggleButton.width) / 2f;
+                toggleButton.y = checkY;
+                Image checkBg = Image.FromResource(Resources.Img.MenuOptions, 9);
+                checkBg.parentAnchor = 9;
+                checkBg.x = ((image.width - checkBg.width) / 2f) - 10;
+                checkBg.y = toggleButton.y + toggleButton.height - checkBg.height;
+                _ = image.AddChild(checkBg);
+                _ = image.AddChild(toggleButton);
+                int horizontalTouchPadding = (image.width / 2) - (toggleButton.width / 2);
+                toggleButton.SetTouchIncreaseLeftRightTopBottom(horizontalTouchPadding, horizontalTouchPadding, image.height * 0.85f, 0);
+            }
+            else
+            {
+                Image checkIcon = Image.FromResource(Resources.Img.MenuOptions, 7);
+                checkIcon.parentAnchor = 9;
+                checkIcon.x = (image.width - checkIcon.width) / 2f;
+                checkIcon.y = checkY;
+                Image checkBg = Image.FromResource(Resources.Img.MenuOptions, 10);
+                checkBg.parentAnchor = 9;
+                checkBg.x = ((image.width - checkBg.width) / 2f) - 10;
+                checkBg.y = checkIcon.y + checkIcon.height - checkBg.height;
+                _ = image.AddChild(checkBg);
+                _ = image.AddChild(checkIcon);
+            }
+            return image;
+        }
+
+        /// <summary>
+        /// Creates the visual element for an achievement or leaderboard button state.
+        /// </summary>
+        /// <param name="quad">Icon quad index.</param>
+        /// <param name="pressed">Whether to use the pressed-state button background.</param>
+        /// <returns>The configured scores button image.</returns>
+        public static Image CreateBlankScoresButtonWithIconpressed(int quad, bool pressed)
+        {
+            Image buttonBackground = Image.FromResource(Resources.Img.MenuButtonAchivCup, pressed ? 1 : 0);
+            Image icon = Image.FromResource(Resources.Img.MenuButtonAchivCup, quad);
+            _ = buttonBackground.AddChild(icon);
+            icon.parentAnchor = 9;
+            Image.SetElementPositionWithRelativeQuadOffset(icon, Resources.Img.MenuButtonAchivCup, 0, quad);
+            return buttonBackground;
+        }
+
+        /// <summary>
+        /// Creates an achievement or leaderboard button.
+        /// </summary>
+        /// <param name="quad">Icon quad index.</param>
+        /// <param name="bId">Raw button identifier assigned to the created button.</param>
+        /// <param name="delegateValue">Button delegate that receives press events.</param>
+        /// <returns>The configured scores button.</returns>
+        public static Button CreateScoresButtonWithIconbuttonIDdelegate(int quad, int bId, IButtonDelegation delegateValue)
+        {
+            Image up = CreateBlankScoresButtonWithIconpressed(quad, false);
+            Image image = CreateBlankScoresButtonWithIconpressed(quad, true);
+            Image.SetElementPositionWithRelativeQuadOffset(image, Resources.Img.MenuButtonAchivCup, 0, 1);
+            Button button = new Button().InitWithUpElementDownElementandID(up, image, bId);
+            button.delegateButtonDelegate = delegateValue;
+            return button;
+        }
+
+        /// <summary>
+        /// Builds the main menu view.
+        /// </summary>
+        public void CreateMainMenu()
+        {
+            MenuView menuView = new();
+
+            // Everything the scene authors in design coordinates hangs from here; the layout pass
+            // fits this one element and the whole composition follows it.
+            FittedGroup designGroup = new() { anchor = 9, parentAnchor = 9 };
+            mainMenuGroup = designGroup;
+            BaseElement baseElement = CreateBackgroundWithLogo(true, VIEW_MAIN_MENU, designGroup);
+            VBox vBox = new VBox().InitWithOffsetAlignWidth(5, 2, DesignBox.w);
+            vBox.anchor = vBox.parentAnchor = 34;
+            vBox.y = -85f;
+            Button playButton = CreateButtonWithTextIDDelegate(Application.GetString("PLAY"), MenuButtonId.Play, this);
+            _ = vBox.AddChild(playButton);
+            Button optionsButton = CreateButtonWithTextIDDelegate(Application.GetString("OPTIONS"), MenuButtonId.Options, this);
+            _ = vBox.AddChild(optionsButton);
+            if (PlatformServices.Host?.CanExit == true)
+            {
+                Button exitButton = CreateButtonWithTextIDDelegate(Application.GetString("QUIT_BUTTON"), MenuButtonId.ShowQuitPopup, this);
+                _ = vBox.AddChild(exitButton);
+            }
+            else if (!string.IsNullOrEmpty(PlatformServices.Host?.LevelEditorUrl))
+            {
+                // A host that cannot quit leaves the third slot empty, so the editor takes it and
+                // the menu keeps the three-button shape it was laid out for.
+                Button exitButton = CreateButtonWithTextIDDelegate(Application.GetString("LEVEL_EDITOR_BUTTON"), MenuButtonId.LevelEditor, this);
+                _ = vBox.AddChild(exitButton);
+            }
+            _ = designGroup.AddChild(vBox);
+            bool hasFacebookButton = Application.GetString("FACEBOOK_BUTTON").Length > 0;
+            if (hasFacebookButton)
+            {
+                BaseElement socialContainer = new();
+                socialContainer.SetName("container");
+                socialContainer.parentAnchor = socialContainer.anchor = 18;
+                socialContainer.width = baseElement.width;
+                socialContainer.height = baseElement.height;
+                _ = baseElement.AddChild(socialContainer);
+                mainMenuSocial = socialContainer;
+                Texture2D texture = Application.GetTexture(Resources.Img.MenuExtraButtons);
+                Button button = CreateButton2WithImageQuad1Quad2IDDelegate(Resources.Img.MenuExtraButtons, 3, 3, MenuButtonId.OpenTwitter, this);
+                button.anchor = 9;
+                button.parentAnchor = 36;
+                Image.SetElementPositionWithQuadOffset(button, Resources.Img.MenuExtraButtons, 3);
+                button.x -= texture.preCutSize.X;
+                button.y -= texture.preCutSize.Y;
+                _ = socialContainer.AddChild(button);
+                Button facebookButton = CreateButton2WithImageQuad1Quad2IDDelegate(Resources.Img.MenuExtraButtons, 2, 2, MenuButtonId.OpenFacebook, this);
+                facebookButton.anchor = 9;
+                facebookButton.parentAnchor = 36;
+                Image.SetElementPositionWithQuadOffset(facebookButton, Resources.Img.MenuExtraButtons, 2);
+                facebookButton.x -= texture.preCutSize.X;
+                facebookButton.y -= texture.preCutSize.Y;
+                if (hasFacebookButton)
+                {
+                    _ = socialContainer.AddChild(facebookButton);
+                }
+                Image image = Image.FromResource(Resources.Img.MenuExtraButtonsEn, 0);
+                image.anchor = 9;
+                image.parentAnchor = 36;
+                Image.SetElementPositionWithQuadOffset(image, Resources.Img.MenuExtraButtonsEn, 0);
+                image.x -= texture.preCutSize.X;
+                image.y -= texture.preCutSize.Y;
+                _ = socialContainer.AddChild(image);
+            }
+            _ = menuView.AddChild(baseElement);
+            AttachSnowfallOverlay(menuView);
+            AddViewwithID(menuView, 0);
+        }
+
+        /// <summary>
+        /// Builds the options view.
+        /// </summary>
+        public void CreateOptions()
+        {
+            MenuView menuView = new();
+            FittedGroup designGroup = new() { anchor = 9, parentAnchor = 9 };
+            optionsGroup = designGroup;
+            BaseElement baseElement = CreateBackgroundWithLogowithShadow(false, false, VIEW_OPTIONS);
+            _ = menuView.AddChild(baseElement);
+            BaseElement dragToCutOption = CreateControlButtontitleAnchortextbuttonIDdelegate(5, Application.GetString("DRAG_TO_CUT"), -1, null);
+            BaseElement clickToCutOption = CreateControlButtontitleAnchortextbuttonIDdelegate(6, Application.GetString("CLICK_TO_CUT"), MenuButtonId.ToggleClickToCut, this);
+            HBox hBox = new HBox().InitWithOffsetAlignHeight(RTPD(80), 16, Math.Max(dragToCutOption.height, clickToCutOption.height));
+            hBox.parentAnchor = hBox.anchor = 18;
+            _ = hBox.AddChild(dragToCutOption);
+            _ = hBox.AddChild(clickToCutOption);
+            _ = designGroup.AddChild(hBox);
+            Image image = Image.FromResource(Resources.Img.MenuBgrShadow, 0);
+            image.anchor = image.parentAnchor = 18;
+            image.scaleX = image.scaleY = 2f;
+            Timeline timeline = new Timeline().InitWithMaxKeyFramesOnTrack(3);
+            timeline.AddKeyFrame(KeyFrame.MakeRotation(45, KeyFrame.TransitionType.FRAME_TRANSITION_LINEAR, 0));
+            timeline.AddKeyFrame(KeyFrame.MakeRotation(405, KeyFrame.TransitionType.FRAME_TRANSITION_LINEAR, 75));
+            timeline.SetTimelineLoopType(Timeline.LoopType.TIMELINE_REPLAY);
+            _ = image.AddTimeline(timeline);
+            image.PlayTimeline(0);
+            _ = menuView.AddChild(image);
+            optionsShadow = image;
+            VBox vBox = new VBox().InitWithOffsetAlignWidth(5f, 2, DesignBox.w);
+            vBox.anchor = vBox.parentAnchor = 18;
+            ToggleButton musicToggle = CreateAudioButtonWithQuadDelegateIDiconOffset(3, this, MenuButtonId.ToggleMusic);
+            ToggleButton soundToggle = CreateAudioButtonWithQuadDelegateIDiconOffset(2, this, MenuButtonId.ToggleSound);
+            HBox audioRow = new HBox().InitWithOffsetAlignHeight(-10f, 16, musicToggle.height);
+            _ = audioRow.AddChild(soundToggle);
+            _ = audioRow.AddChild(musicToggle);
+            if (MenuTheme.IsExperiments)
+            {
+                ToggleButton voiceToggle = CreateExperimentsVoiceToggle(this, MenuButtonId.ToggleVoice);
+                _ = audioRow.AddChild(voiceToggle);
+                if (!Preferences.GetBooleanForKey(ExperimentsVoice.PreferenceKey))
+                {
+                    voiceToggle.Toggle();
+                }
+            }
+            _ = vBox.AddChild(audioRow);
+            Button langBtn = CreateButtonWithTextIDDelegate(Application.GetString("LANGUAGE"), MenuButtonId.ShowLanguage, this);
+            _ = vBox.AddChild(langBtn);
+            Button resetButton = CreateButtonWithTextIDDelegate(Application.GetString("RESET"), MenuButtonId.ShowReset, this);
+            _ = vBox.AddChild(resetButton);
+            Button creditsButton = CreateButtonWithTextIDDelegate(Application.GetString("CREDITS"), MenuButtonId.ShowCredits, this);
+            _ = vBox.AddChild(creditsButton);
+            _ = designGroup.AddChild(vBox);
+            _ = menuView.AddChild(designGroup);
+            hBox.y = (vBox.height / 2) + 10;
+            vBox.y = -hBox.height / 2;
+            bool soundOn = Preferences.GetBooleanForKey("SOUND_ON");
+            bool musicOn = Preferences.GetBooleanForKey("MUSIC_ON");
+            bool clickToCut = Preferences.GetBooleanForKey("PREFS_CLICK_TO_CUT");
+            if (!soundOn)
+            {
+                soundToggle.Toggle();
+            }
+            if (!musicOn)
+            {
+                musicToggle.Toggle();
+            }
+            ToggleButton clickToCutToggle = (ToggleButton)clickToCutOption.GetChildWithName("button");
+            if (clickToCut && clickToCutToggle != null)
+            {
+                clickToCutToggle.Toggle();
+            }
+            Button backButton = CreateBackButtonWithDelegateID(this, MenuButtonId.BackFromOptions);
+            backButton.SetName("backb");
+            _ = menuView.AddChild(backButton);
+            AttachSnowfallOverlay(menuView);
+            AddViewwithID(menuView, 1);
+        }
+
+        /// <summary>
+        /// Builds the reset-confirmation view.
+        /// </summary>
+        public void CreateReset()
+        {
+            MenuView menuView = new();
+            BaseElement baseElement = CreateBackgroundWithLogo(false, VIEW_RESET);
+            FittedGroup designGroup = new() { anchor = 9, parentAnchor = 9 };
+            resetGroup = designGroup;
+            Text text = new Text().InitWithFont(Application.GetFont(Resources.Fnt.BigFont));
+            text.SetAlignment(2);
+            text.anchor = text.parentAnchor = 18;
+            _ = designGroup.AddChild(text);
+            text.y = -200f;
+            resetText = text;
+            WrapResetText();
+            Button yesButton = CreateButtonWithTextIDDelegate(Application.GetString("YES"), MenuButtonId.ConfirmResetYes, this);
+            yesButton.anchor = yesButton.parentAnchor = 34;
+            yesButton.y = -540f;
+            Button noButton = CreateButtonWithTextIDDelegate(Application.GetString("NO"), MenuButtonId.ConfirmResetNo, this);
+            noButton.anchor = noButton.parentAnchor = 34;
+            noButton.y = -320f;
+            _ = designGroup.AddChild(yesButton);
+            _ = designGroup.AddChild(noButton);
+            _ = menuView.AddChild(baseElement);
+            _ = menuView.AddChild(designGroup);
+            Button backButton = CreateBackButtonWithDelegateID(this, MenuButtonId.BackToOptions);
+            backButton.SetName("backb");
+            _ = menuView.AddChild(backButton);
+            AttachSnowfallOverlay(menuView);
+            AddViewwithID(menuView, 4);
+        }
+
+        /// <summary>
+        /// Builds the language selection view from the available UI language list.
+        /// </summary>
+        public void CreateLanguageSelection()
+        {
+            MenuView menuView = new();
+            BaseElement baseElement = CreateBackgroundWithLogo(false, VIEW_LANGUAGE_SELECT);
+            FittedGroup designGroup = new() { anchor = 9, parentAnchor = 9 };
+            languageGroup = designGroup;
+
+            IReadOnlyList<string> langCodes = LanguageHelper.UiLanguageCodes;
+            string currentLocale = LanguageHelper.CurrentCode;
+            int columns = LanguageColumns();
+            languageColumnsBuiltFor = columns;
+
+            // Build rows using VBox of HBoxes (same pattern as options menu)
+            VBox vBox = new VBox().InitWithOffsetAlignWidth(5f, 2, DesignBox.w);
+            vBox.anchor = vBox.parentAnchor = 18;
+
+            for (int i = 0; i < langCodes.Count; i += columns)
+            {
+                string firstName = LanguageHelper.GetLanguageDisplayName(langCodes[i]);
+                bool firstSelected = langCodes[i] == currentLocale;
+                Button firstButton = CreateShortButtonWithTextIDDelegate(firstName, MenuButtonId.ForLanguage(i), this, firstSelected);
+                HBox hBox = new HBox().InitWithOffsetAlignHeight(LanguageGridLayout.ButtonSpacing, 16, firstButton.height);
+                _ = hBox.AddChild(firstButton);
+
+                for (int j = 1; j < columns && i + j < langCodes.Count; j++)
+                {
+                    string name = LanguageHelper.GetLanguageDisplayName(langCodes[i + j]);
+                    bool selected = langCodes[i + j] == currentLocale;
+                    Button button = CreateShortButtonWithTextIDDelegate(name, MenuButtonId.ForLanguage(i + j), this, selected);
+                    _ = hBox.AddChild(button);
+                }
+
+                _ = vBox.AddChild(hBox);
+            }
+
+            _ = designGroup.AddChild(vBox);
+            _ = menuView.AddChild(baseElement);
+            _ = menuView.AddChild(designGroup);
+            Button backButton = CreateBackButtonWithDelegateID(this, MenuButtonId.BackFromLanguage);
+            backButton.SetName("backb");
+            _ = menuView.AddChild(backButton);
+            AttachSnowfallOverlay(menuView);
+            AddViewwithID(menuView, VIEW_LANGUAGE_SELECT);
+        }
+
+        /// <summary>
+        /// Gets how many language buttons fit in a row on the viewport being drawn to.
+        /// </summary>
+        /// <returns>The number of buttons per row.</returns>
+        public static int LanguageColumns()
+        {
+            return LanguageGridLayout.ColumnsFor(
+                VisibleBounds,
+                FittedScale,
+                Image.GetQuadSize(Resources.Img.MenuButtons, LanguageButtonQuad).X);
+        }
+
+        /// <summary>Quad the language buttons are drawn from, which is what sets their width.</summary>
+        private const int LanguageButtonQuad = 3;
+
+        /// <summary>
+        /// Builds the movie playback view.
+        /// </summary>
+        public void CreateMovieView()
+        {
+            MovieView movieView = new();
+            RectangleElement rectangleElement = new()
+            {
+                width = (int)VisibleBounds.w,
+                height = (int)VisibleBounds.h,
+                color = RGBAColor.blackRGBA
+            };
+            _ = movieView.AddChild(rectangleElement);
+            moviePlate = rectangleElement;
+            AttachSnowfallOverlay(movieView);
+            AddViewwithID(movieView, 7);
+        }
+
+        /// <summary>
+        /// Builds the about and credits view.
+        /// </summary>
+        public void CreateAbout()
+        {
+            BaseElement background = CreateBackgroundWithLogo(false, VIEW_ABOUT);
+            aboutView = new AboutView();
+            MenuView menuView = aboutView.CreateAbout(background, this, FittedScale);
+            AttachSnowfallOverlay(menuView);
+            AddViewwithID(menuView, 3);
+        }
+
+        /// <summary>
+        /// Builds the candy, rope, Om Nom, and trace skin selection view.
+        /// </summary>
+        public void CreateCandySelection()
+        {
+            MenuView menuView = CandySelectionView.CreateCandySelection(this, out candyContainer);
+            AttachSnowfallOverlay(menuView);
+            AddViewwithID(menuView, VIEW_CANDY_SELECT);
+        }
+
+        /// <summary>
+        /// Creates a horizontal star-count label.
+        /// </summary>
+        /// <param name="t">Text shown before the star icon.</param>
+        /// <returns>The configured label row.</returns>
+        public static HBox CreateTextWithStar(string t)
+        {
+            HBox hbox = new HBox().InitWithOffsetAlignHeight(0, 16, RTD(50));
+            Text text = new Text().InitWithFont(Application.GetFont(Resources.Fnt.BigFont));
+            text.SetString(t);
+            text.scaleX = text.scaleY = 0.7f;
+            text.rotationCenterX = -text.width / 2;
+            text.width = (int)(text.width * 0.7f);
+            _ = hbox.AddChild(text);
+            Image c = Image.FromResource(Resources.Img.MenuPackUI, 3);
+            _ = hbox.AddChild(c);
+            return hbox;
+        }
+
+        /// <summary>
+        /// Gets the rendered width of a pack box in the pack picker.
+        /// </summary>
+        /// <returns>The box width including its quad offset padding.</returns>
+        public static float GetBoxWidth()
+        {
+            PackDefinition firstPack = PackConfig.Packs[0];
+            return Image.GetQuadSize(firstPack.PackSpritesheet, firstPack.PackQuadIndex).X + (Image.GetQuadOffset(firstPack.PackSpritesheet, firstPack.PackQuadIndex).X * 2f);
+        }
+
+        /// <summary>
+        /// How the pack strip divides the viewport it is being drawn on, measured against the
+        /// artwork's own width.
+        /// </summary>
+        /// <remarks>
+        /// Derived on read rather than kept, so it is right the instant the viewport changes and
+        /// there is no second copy to keep in step. The strip is drawn at the scale every other
+        /// menu's design-space content is fitted at; it cannot hang from a
+        /// <see cref="ViewController.PlaceFittedGroup(BaseElement)"/> group, because it clips with
+        /// a scissor rectangle no ancestor transform reaches, so it reads the scale and applies it
+        /// to its own metrics instead. Held at one, it was the one composition that did not spend
+        /// the room a viewport away from the design shape hands it: on a phone everything around a
+        /// box grew and the box stayed the size the landscape design drew it.
+        /// </remarks>
+        /// <returns>The current layout.</returns>
+        public static PackStripLayout PackStrip()
+        {
+            return PackStripLayout.For(VisibleBounds, FittedScale, GetBoxWidth());
+        }
+
+        /// <summary>
+        /// Creates one pack tile for the pack selection scroll container.
+        /// </summary>
+        /// <param name="n">Displayed pack index.</param>
+        /// <param name="c">Scrollable container that owns the pack tile.</param>
+        /// <returns>The configured pack tile element.</returns>
+        public BaseElement CreatePackElementforContainer(int n, ScrollableContainer c)
+        {
+            TouchBaseElement touchBaseElement = new()
+            {
+                delegateValue = this
+            };
+            BaseElement baseElement = new();
+            baseElement.SetName("boxContainer");
+            baseElement.anchor = baseElement.parentAnchor = 12;
+            _ = touchBaseElement.AddChild(baseElement);
+            int totalStars = Preferences.GetTotalStarsInBox(PackConfig.GetSaveSlot(n));
+            if (n > 0 && n < Preferences.GetPacksCount() && Preferences.GetUnlockedForPackLevel(n, 0) == UNLOCKEDSTATE.LOCKED && totalStars >= PackConfig.GetUnlockStars(n))
+            {
+                Preferences.SetUnlockedForPackLevel(UNLOCKEDSTATE.JUSTUNLOCKED, n, 0);
+            }
+            // Resolve pack config index: for display index == packsCount, use the coming soon entry
+            int packConfigIndex = n < Preferences.GetPacksCount() ? n : PackConfig.GetComingSoonPackIndex();
+            bool isComingSoon = n >= Preferences.GetPacksCount();
+            PackDefinition packDef = PackConfig.Packs[packConfigIndex];
+            string resourceName = packDef.PackSpritesheet;
+            int q = packDef.PackQuadIndex;
+
+            // Fallback to first pack's box sprite if quad index is out of range
+            int quadCount = Application.GetTexture(resourceName).quadRects?.Length ?? 0;
+            if (q < 0 || q >= quadCount)
+            {
+                resourceName = PackConfig.Packs[0].PackSpritesheet;
+                q = PackConfig.Packs[0].PackQuadIndex;
+            }
+            string packTitle = isComingSoon ? Application.GetString("BOX_SOON_LABEL") : PackConfig.GetPackTitle(n);
+            UNLOCKEDSTATE unlockedForPackLevel = Preferences.GetUnlockedForPackLevel(n, 0);
+            bool isLockedPack = unlockedForPackLevel == UNLOCKEDSTATE.LOCKED && !isComingSoon;
+            touchBaseElement.bid = !isComingSoon ? MenuButtonId.ForPack(n) : new MenuButtonId(-1);
+            PackStripLayout strip = PackStrip();
+            Image image = Image.FromResource(resourceName, q);
+            image.DoRestoreCutTransparency();
+
+            // Centered in the tile rather than pinned to its top left, because the tile is the
+            // scaled size and the artwork is scaled about its own center: everything hanging off
+            // the box - its label, its lock, its badge - is authored against the unscaled artwork
+            // and rides that one transform, so only the tile has to know the scale.
+            image.anchor = image.parentAnchor = 18;
+            image.scaleX = image.scaleY = strip.Scale;
+            if (isLockedPack)
+            {
+                _ = baseElement.AddChild(image);
+                int requiredStars = PackConfig.GetUnlockStars(n);
+                Image lockOverlay = Image.FromResource(Resources.Img.MenuPackUI, 2);
+                lockOverlay.DoRestoreCutTransparency();
+                lockOverlay.anchor = lockOverlay.parentAnchor = 9;
+                _ = image.AddChild(lockOverlay);
+                HBox hBox = CreateTextWithStar(requiredStars.ToString(CultureInfo.InvariantCulture));
+                hBox.anchor = hBox.parentAnchor = 18;
+                hBox.y = 110f;
+                _ = lockOverlay.AddChild(hBox);
+                Text text = new Text().InitWithFont(Application.GetFont(Resources.Fnt.SmallFont));
+                string newString = Application.GetString("UNLOCK_HINT").ToString().Replace("%d", requiredStars.ToString(CultureInfo.InvariantCulture));
+                text.SetAlignment(2);
+                text.anchor = 10;
+                text.parentAnchor = 34;
+                text.SetStringandWidth(newString, 600f);
+                text.y = -60f * strip.Scale;
+                text.scaleX = text.scaleY = 0.7f * strip.Scale;
+                text.rotationCenterY = -text.height / 2;
+                _ = touchBaseElement.AddChild(text);
+            }
+            else
+            {
+                if (!isComingSoon)
+                {
+                    // drawing om nom and the background behind him in the box
+                    int omNomQuad = 1;
+                    MonsterSlot monsterSlot = MonsterSlot.Create(PackConfig.GetBoxHoleBgColor(n), strip);
+                    monsterSlot.c = c;
+                    monsterSlot.anchor = 9;
+                    monsterSlot.parentAnchor = 9;
+                    monsterSlot.y = image.y;
+                    _ = baseElement.AddChild(monsterSlot);
+                    Image omNom = Image.FromResource(Resources.Img.MenuPackUI, omNomQuad);
+                    omNom.DoRestoreCutTransparency();
+                    omNom.anchor = 17;
+
+                    // Om Nom is placed in screen space, not in the box's, because the reveal
+                    // window slides over him as the strip scrolls past. He is scaled about his own
+                    // center like everything else the strip draws, so the drift that puts on his
+                    // left edge - the edge his position names - comes back out here.
+                    omNom.scaleX = omNom.scaleY = strip.Scale;
+                    omNom.x = packContainer.x + strip.SelectedBoxLeft
+                        - (omNom.width * (1f - strip.Scale) / 2f);
+                    omNom.y = packContainer.y + (VisibleBounds.h / 2f);
+                    omNom.parentAnchor = -1;
+                    _ = monsterSlot.AddChild(omNom);
+                }
+                _ = baseElement.AddChild(image);
+                if (Preferences.IsPackPerfect(n) & !isComingSoon)
+                {
+                    // Create perfect pack badge
+                    Image packPerfect = Image.FromResource(Resources.Img.MenuPackUI, 8);
+                    packPerfect.parentAnchor = packPerfect.anchor = 33; // bottom-left
+                    packPerfect.x = 100f;
+                    packPerfect.y = -100f;
+                    _ = image.AddChild(packPerfect);
+                }
+                if (unlockedForPackLevel == UNLOCKEDSTATE.JUSTUNLOCKED && !isComingSoon)
+                {
+                    Image justUnlockedLock = Image.FromResource(Resources.Img.MenuPackUI, 2);
+                    justUnlockedLock.SetName("lockHideMe");
+                    justUnlockedLock.DoRestoreCutTransparency();
+                    justUnlockedLock.anchor = justUnlockedLock.parentAnchor = 9;
+
+                    // Hung from the box art, the way the lock it is replacing is on a box that is
+                    // still locked. This is the same quad drawn at the same place, so it has to
+                    // resolve against the same thing: on the tile instead it read the tile's
+                    // corner and missed the strip's scale, and the lock burst away from wherever
+                    // the one it was standing in for had been sitting. Its own timeline scales it
+                    // from one to two, which now compounds with the box's scale rather than
+                    // replacing it.
+                    _ = image.AddChild(justUnlockedLock);
+                    Timeline timeline = new Timeline().InitWithMaxKeyFramesOnTrack(3);
+                    timeline.AddKeyFrame(KeyFrame.MakeColor(RGBAColor.solidOpaqueRGBA, KeyFrame.TransitionType.FRAME_TRANSITION_LINEAR, 0));
+                    timeline.AddKeyFrame(KeyFrame.MakeColor(RGBAColor.transparentRGBA, KeyFrame.TransitionType.FRAME_TRANSITION_LINEAR, 1.5f));
+                    timeline.AddKeyFrame(KeyFrame.MakeScale(1, 1, KeyFrame.TransitionType.FRAME_TRANSITION_LINEAR, 0));
+                    timeline.AddKeyFrame(KeyFrame.MakeScale(2, 2, KeyFrame.TransitionType.FRAME_TRANSITION_LINEAR, 1.5f));
+                    _ = justUnlockedLock.AddTimeline(timeline);
+                }
+            }
+            // Add box label if defined in pack config
+            string boxLabelTextKey = PackConfig.GetBoxLabelText(n);
+            if (!string.IsNullOrEmpty(boxLabelTextKey))
+            {
+                Image boxLabel = Image.FromResource(Resources.Img.MenuPackUI, 9);
+                boxLabel.parentAnchor = boxLabel.anchor = 36; // bottom-right
+                boxLabel.x = -90f;
+                boxLabel.y = -90f;
+                _ = image.AddChild(boxLabel);
+
+                // Add rotated text centered on the label (like button text)
+                Text labelText = new Text().InitWithFont(Application.GetFont(Resources.Fnt.BigFont));
+                labelText.SetString(Application.GetString(boxLabelTextKey));
+                labelText.scaleX = labelText.scaleY = 0.35f;
+                labelText.SetAlignment(1); // Center alignment
+                labelText.anchor = labelText.parentAnchor = 18; // center-center like buttons
+                labelText.rotation = -16f;
+                _ = boxLabel.AddChild(labelText);
+            }
+            Text packTitleText = new Text().InitWithFont(Application.GetFont(Resources.Fnt.BigFont));
+            packTitleText.anchor = packTitleText.parentAnchor = 10;
+            packTitleText.scaleX = packTitleText.scaleY = 0.75f;
+            if (LanguageHelper.IsCurrentAny(Language.LANGDE, Language.LANGEN))
+            {
+                packTitleText.scaleX = 0.7f;
+            }
+            packTitleText.SetAlignment(2);
+            if (!isComingSoon)
+            {
+                packTitleText.SetString(packTitle);
+            }
+            else
+            {
+                packTitleText.SetStringandWidth(packTitle, 656);
+            }
+            packTitleText.y = 140f;
+            _ = image.AddChild(packTitleText);
+            Timeline pressBounceTimeline = new Timeline().InitWithMaxKeyFramesOnTrack(4);
+            pressBounceTimeline.AddKeyFrame(KeyFrame.MakeScale(1, 1, KeyFrame.TransitionType.FRAME_TRANSITION_LINEAR, 0));
+            pressBounceTimeline.AddKeyFrame(KeyFrame.MakeScale(0.95f, 1.05f, KeyFrame.TransitionType.FRAME_TRANSITION_EASE_OUT, 0.15f));
+            pressBounceTimeline.AddKeyFrame(KeyFrame.MakeScale(1.05f, 0.95f, KeyFrame.TransitionType.FRAME_TRANSITION_EASE_OUT, 0.2f));
+            pressBounceTimeline.AddKeyFrame(KeyFrame.MakeScale(1, 1, KeyFrame.TransitionType.FRAME_TRANSITION_EASE_OUT, 0.25f));
+            _ = baseElement.AddTimeline(pressBounceTimeline);
+            baseElement.height = touchBaseElement.height = (int)MathF.Round(image.height * strip.Scale);
+            baseElement.width = touchBaseElement.width = (int)MathF.Round(image.width * strip.Scale);
+            return touchBaseElement;
+        }
+
+        /// <summary>
+        /// Builds the pack selection view.
+        /// </summary>
+        public void CreatePackSelect()
+        {
+            if (MenuTheme.IsExperiments)
+            {
+                CreateExperimentsPackSelect();
+                return;
+            }
+
+            MenuView menuView = new();
+            BaseElement baseElement = CreateBackgroundWithLogo(false, VIEW_PACK_SELECT);
+            string totalStarsLabel = Application.GetString("TOTAL_STARS").ToString();
+            totalStarsLabel = totalStarsLabel.Replace("%d", "");
+            HBox hBox = CreateTextWithStar(totalStarsLabel + Preferences.GetTotalStars().ToString(CultureInfo.InvariantCulture));
+            PlaceStarTotal(hBox);
+            hBox.SetName("text");
+            PackStripLayout strip = PackStrip();
+            HBox packRow = new HBox().InitWithOffsetAlignHeight(strip.Spacing, 16, VisibleBounds.h);
+            packContainer = new ScrollableContainer().InitWithWidthHeightContainer(
+                strip.StripWidth,
+                VisibleBounds.h,
+                packRow);
+            packContainer.minAutoScrollToSpointLength = RTD(5);
+            packContainer.shouldBounceHorizontally = true;
+            packContainer.resetScrollOnShow = false;
+            packContainer.dontHandleTouchDownsHandledByChilds = true;
+            packContainer.dontHandleTouchMovesHandledByChilds = true;
+            packContainer.dontHandleTouchUpsHandledByChilds = true;
+            packContainer.TurnScrollPointsOnWithCapacity(Preferences.GetPacksCount() + 2);
+            packContainer.delegateScrollableContainerProtocol = this;
+            packContainer.x = (VisibleBounds.w / 2f) - (packContainer.width / 2);
+            hBox.anchor = hBox.parentAnchor = 12;
+            _ = baseElement.AddChild(hBox);
+            Texture2D texture = Application.GetTexture(Resources.Img.MenuPackUI);
+            BaseElement leadingSpacer = new()
+            {
+                width = (int)MathF.Round(strip.LeadingSpacer),
+                height = (int)MathF.Round(texture.preCutSize.Y * strip.Scale)
+            };
+            _ = packRow.AddChild(leadingSpacer);
+            float scrollPointX = 0f + strip.PackOffset;
+            int displayCount = Preferences.GetPacksCount() + (PackConfig.GetComingSoonPackIndex() >= 0 ? 1 : 0);
+            for (int i = 0; i < displayCount; i++)
+            {
+                TouchBaseElement touchBaseElement = (TouchBaseElement)CreatePackElementforContainer(i, packContainer);
+                boxes[i] = touchBaseElement;
+                _ = packRow.AddChild(touchBaseElement);
+                touchBaseElement.x -= 0f;
+                touchBaseElement.y -= 0f;
+                _ = packContainer.AddScrollPointAtXY(scrollPointX, 0f);
+                touchBaseElement.bbc = MakeRectangle(0f, 0f, strip.Spacing, 0f);
+                scrollPointX += touchBaseElement.width + strip.Spacing;
+            }
+            packRow.width += 1000;
+            Image leftFrame = Image.FromResource(Resources.Img.MenuPackUI, 4);
+            leftFrame.anchor = 17;
+            leftFrame.y += VisibleBounds.h / 2f;
+            PlacePackEdge(
+                leftFrame,
+                packContainer.x - strip.FrameGap,
+                strip.Scale,
+                mirroredX: false,
+                mirroredY: false);
+            _ = baseElement.AddChild(leftFrame);
+            Image rightFrame = Image.FromResource(Resources.Img.MenuPackUI, 4);
+            rightFrame.anchor = 20;
+            rightFrame.y += VisibleBounds.h / 2f;
+            PlacePackEdge(
+                rightFrame,
+                packContainer.x + packContainer.width + strip.FrameGap,
+                strip.Scale,
+                mirroredX: true,
+                mirroredY: true);
+            _ = baseElement.AddChild(rightFrame);
+            _ = baseElement.AddChild(packContainer);
+            Image leftSeam = Image.FromResource(Resources.Img.MenuPackUI, 5);
+            leftSeam.anchor = 20;
+            leftSeam.y += VisibleBounds.h / 2f;
+            PlacePackEdge(
+                leftSeam,
+                packContainer.x + strip.SeamGap,
+                strip.Scale,
+                mirroredX: false,
+                mirroredY: false);
+            _ = baseElement.AddChild(leftSeam);
+            Image rightSeam = Image.FromResource(Resources.Img.MenuPackUI, 5);
+            rightSeam.anchor = 17;
+            rightSeam.y += VisibleBounds.h / 2f;
+            PlacePackEdge(
+                rightSeam,
+                packContainer.x + packContainer.width - strip.SeamGap,
+                strip.Scale,
+                mirroredX: true,
+                mirroredY: true);
+            _ = baseElement.AddChild(rightSeam);
+            prevb = CreateButton2WithImageQuad1Quad2IDDelegate(Resources.Img.MenuPackUI, 6, 7, MenuButtonId.PreviousPack, this);
+            prevb.parentAnchor = 17;
+            prevb.anchor = 20;
+            // The arrows sit outside the box strip where the screen is wide enough to hold them
+            // there, and slide onto its edge where it is not, rather than off the screen.
+            PlacePackEdge(
+                prevb,
+                Math.Max(
+                    packContainer.x - strip.ArrowGap,
+                    (prevb.width * strip.Scale) + PackArrowInset),
+                strip.Scale,
+                mirroredX: false,
+                mirroredY: false);
+            _ = baseElement.AddChild(prevb);
+            nextb = CreateButton2WithImageQuad1Quad2IDDelegate(Resources.Img.MenuPackUI, 6, 7, MenuButtonId.NextPack, this);
+            nextb.anchor = nextb.parentAnchor = 17;
+            PlacePackEdge(
+                nextb,
+                Math.Min(
+                    packContainer.x + packContainer.width + strip.ArrowGap,
+                    VisibleBounds.w - (nextb.width * strip.Scale) - PackArrowInset),
+                strip.Scale,
+                mirroredX: true,
+                mirroredY: false);
+            _ = baseElement.AddChild(nextb);
+            _ = menuView.AddChild(baseElement);
+            packSelectBuiltFor = VisibleBounds;
+            Button button = CreateBackButtonWithDelegateID(this, MenuButtonId.BackFromPackSelect);
+            button.SetName("backb");
+            _ = menuView.AddChild(button);
+            AttachSnowfallOverlay(menuView);
+            AddViewwithID(menuView, 5);
+            int lastPack = Preferences.GetLastBox();
+            Application.SharedRootController().Box = Preferences.GetLastGamePack();
+            packContainer.PlaceToScrollPoint(lastPack);
+            ScrollableContainerchangedTargetScrollPoint(packContainer, lastPack);
+        }
+
+        /// <summary>
+        /// Creates the leaderboards view placeholder.
+        /// </summary>
+        public static void CreateLeaderboards()
+        {
+        }
+
+        /// <summary>
+        /// Creates the achievements view placeholder.
+        /// </summary>
+        public static void CreateAchievements()
+        {
+        }
+
+        /// <summary>
+        /// Shows the popup used when the selected pack cannot be unlocked.
+        /// </summary>
+        public void ShowCantUnlockPopup()
+        {
+            popUpMenu.ShowCantUnlockPopup();
+        }
+
+        /// <summary>
+        /// Shows the popup displayed after the game is completed.
+        /// </summary>
+        public void ShowGameFinishedPopup()
+        {
+            popUpMenu.ShowGameFinishedPopup();
+        }
+
+        /// <summary>
+        /// Shows a generic yes/no popup.
+        /// </summary>
+        /// <param name="str">Popup text.</param>
+        /// <param name="buttonYesId">Button identifier for the yes action.</param>
+        /// <param name="buttonNoId">Button identifier for the no action.</param>
+        public void ShowYesNoPopup(string str, MenuButtonId buttonYesId, MenuButtonId buttonNoId)
+        {
+            ep = popUpMenu.ShowYesNoPopup(str, buttonYesId, buttonNoId);
+        }
+
+        /// <summary>
+        /// Handles a pack scroll container reaching a target scroll point.
+        /// </summary>
+        /// <param name="e">Scrollable container that reached the point.</param>
+        /// <param name="i">Reached scroll point index.</param>
+        public void ScrollableContainerreachedScrollPoint(ScrollableContainer e, int i)
+        {
+            currentPack = i;
+            pack = i;
+            scrollPacksLeft = 0;
+            scrollPacksRight = 0;
+            bScrolling = false;
+            if (prevb.IsEnabled())
+            {
+                prevb.SetState(Button.BUTTON_STATE.BUTTON_UP);
+            }
+            if (nextb.IsEnabled())
+            {
+                nextb.SetState(Button.BUTTON_STATE.BUTTON_UP);
+            }
+            if (i == Preferences.GetPacksCount())
+            {
+                return;
+            }
+            PrepareCoverFor(i);
+            boxes[i].GetChildWithName("boxContainer").PlayTimeline(0);
+            UNLOCKEDSTATE unlockedForPackLevel = Preferences.GetUnlockedForPackLevel(i, 0);
+            BaseElement childWithName = boxes[i].GetChildWithName("lockHideMe");
+            if (childWithName != null && unlockedForPackLevel == UNLOCKEDSTATE.JUSTUNLOCKED)
+            {
+                Preferences.SetUnlockedForPackLevel(UNLOCKEDSTATE.UNLOCKED, i, 0);
+                childWithName.PlayTimeline(0);
+                if (MenuTheme.IsExperiments)
+                {
+                    ReleaseExperimentsButterfly(i);
+                }
+            }
+            RootController root = Application.SharedRootController();
+            if (showNextPackStatus && i == root.Pack + 1)
+            {
+                showNextPackStatus = false;
+                if (unlockedForPackLevel == UNLOCKEDSTATE.LOCKED)
+                {
+                    ShowCantUnlockPopup();
+                }
+            }
+        }
+
+        /// <summary>
+        /// Handles the pack scroll container changing its target scroll point.
+        /// </summary>
+        /// <param name="e">Scrollable container whose target changed.</param>
+        /// <param name="i">Target scroll point index.</param>
+        public void ScrollableContainerchangedTargetScrollPoint(ScrollableContainer e, int i)
+        {
+            currentPack = i;
+            pack = i;
+            Preferences.SetLastBox(i);
+            Preferences.SetLastGamePack(PackConfig.GetSaveSlot(i));
+            if (MenuTheme.IsExperiments)
+            {
+                SteerExperimentsButterfly(i);
+            }
+        }
+
+        /// <summary>
+        /// Starts decoding the cover of the box the pack selector has settled on, so opening that
+        /// box only has to upload it.
+        /// </summary>
+        /// <remarks>
+        /// Only the settled box's cover is held. Moving to another box drops the previous cover's
+        /// decode, so scrolling across every box never keeps more than one decoded cover around.
+        /// </remarks>
+        /// <param name="packIndex">Pack the selector settled on.</param>
+        private void PrepareCoverFor(int packIndex)
+        {
+            ResourceMgr resources = Application.SharedResourceMgr();
+            string cover = PackConfig.GetBoxCoverOrDefault(packIndex);
+            if (preparedCover != null && preparedCover != cover)
+            {
+                resources.DiscardPreparedImageResource(preparedCover);
+            }
+
+            preparedCover = cover;
+            resources.PrepareImageResource(cover);
+        }
+
+        /// <summary>Cover whose decode the pack selector started last, or <see langword="null"/>.</summary>
+        private string preparedCover;
+
+        /// <summary>
+        /// Creates one level selection button for a pack.
+        /// </summary>
+        /// <param name="l">Level index within the pack.</param>
+        /// <param name="p">Pack index.</param>
+        /// <returns>The configured level button element.</returns>
+        public BaseElement CreateButtonForLevelPack(int l, int p)
+        {
+            bool isLocked = Preferences.GetUnlockedForPackLevel(p, l) == UNLOCKEDSTATE.LOCKED;
+            int starsForPackLevel = Preferences.GetStarsForPackLevel(p, l);
+            TouchBaseElement touchBaseElement = new()
+            {
+                bbc = MakeRectangle(5f, 0f, -10f, 0f),
+                delegateValue = this
+            };
+            Image image;
+            if (isLocked)
+            {
+                touchBaseElement.bid = new MenuButtonId(-1);
+                image = Image.FromResource(Resources.Img.MenuLevelUi, 1);
+                image.DoRestoreCutTransparency();
+            }
+            else
+            {
+                touchBaseElement.bid = MenuButtonId.ForLevel(l);
+                image = Image.FromResource(Resources.Img.MenuLevelUi, 0);
+                image.DoRestoreCutTransparency();
+                Text text = new Text().InitWithFont(Application.GetFont(Resources.Fnt.BigFont));
+                string @string = (l + 1).ToString(CultureInfo.InvariantCulture);
+                text.SetString(@string);
+                text.anchor = text.parentAnchor = 18;
+                text.y -= 5f;
+                _ = image.AddChild(text);
+                Image starsBadge = Image.FromResource(Resources.Img.MenuLevelUi, 2 + starsForPackLevel);
+                starsBadge.DoRestoreCutTransparency();
+                starsBadge.anchor = starsBadge.parentAnchor = 9;
+                _ = image.AddChild(starsBadge);
+            }
+            image.anchor = image.parentAnchor = 18;
+            _ = touchBaseElement.AddChild(image);
+            touchBaseElement.SetSizeToChildsBounds();
+            return touchBaseElement;
+        }
+
+        /// <summary>
+        /// Builds the level selection view for the current pack.
+        /// </summary>
+        public void CreateLevelSelect()
+        {
+            float transitionDuration = 0.3f;
+            MenuView menuView = new();
+            Timeline coverDimTimeline = new Timeline().InitWithMaxKeyFramesOnTrack(3);
+            coverDimTimeline.AddKeyFrame(KeyFrame.MakeColor(RGBAColor.solidOpaqueRGBA, KeyFrame.TransitionType.FRAME_TRANSITION_LINEAR, 0));
+            coverDimTimeline.AddKeyFrame(KeyFrame.MakeColor(RGBAColor.MakeRGBA(0.85f, 0.85f, 0.85f, 1), KeyFrame.TransitionType.FRAME_TRANSITION_LINEAR, transitionDuration));
+            if (MenuTheme.IsExperiments)
+            {
+                // Experiments draws the loading screen's sheet here instead of the box's cover.
+                BaseElement sheet = LoadingView.CreateExperimentsSheet();
+                sheet.SetName("levelsBack");
+                _ = sheet.AddTimeline(coverDimTimeline);
+                levelsSheet = sheet;
+                levelsCoverLeft = levelsCoverRight = levelsSpineLeft = levelsSpineRight = null;
+                PlaceLevelsSheet(VisibleBounds);
+                _ = menuView.AddChild(sheet);
+            }
+            else
+            {
+                levelsSheet = null;
+                string boxCover = PackConfig.GetBoxCoverOrDefault(pack);
+                Image coverLeft = Image.FromResource(boxCover, 0);
+                Image coverRight = Image.FromResource(boxCover, 0);
+                float x = (VisibleBounds.w / 2f) - coverLeft.width;
+                coverLeft.x = x;
+                coverLeft.passTransformationsToChilds = false;
+                coverRight.x = VisibleBounds.w / 2f;
+                coverRight.rotation = 180f;
+                coverRight.y -= 0.5f;
+                levelsCoverLeft = coverLeft;
+                levelsCoverRight = coverRight;
+                _ = coverLeft.AddTimeline(coverDimTimeline);
+                coverLeft.SetName("levelsBack");
+                _ = coverLeft.AddChild(coverRight);
+                _ = menuView.AddChild(coverLeft);
+                Image spineLeft = Image.FromResource(Resources.Img.MenuLevelUi, 6);
+                Image spineRight = Image.FromResource(Resources.Img.MenuLevelUi, 7);
+                spineLeft.y = 80f;
+                spineRight.y = 80f;
+                levelsSpineLeft = spineLeft;
+                levelsSpineRight = spineRight;
+                PlaceLevelSpines(VisibleBounds);
+                _ = menuView.AddChild(spineLeft);
+                _ = menuView.AddChild(spineRight);
+            }
+            Image shadowImage = Image.FromResource(Resources.Img.MenuBgrShadow, 0);
+            shadowImage.SetName("shadow");
+            shadowImage.anchor = shadowImage.parentAnchor = 18;
+            shadowImage.scaleX = shadowImage.scaleY = 2f;
+            Timeline shadowScaleTimeline = new Timeline().InitWithMaxKeyFramesOnTrack(2);
+            shadowScaleTimeline.AddKeyFrame(KeyFrame.MakeScale(2, 2, KeyFrame.TransitionType.FRAME_TRANSITION_LINEAR, 0));
+            shadowScaleTimeline.AddKeyFrame(KeyFrame.MakeScale(5, 5, KeyFrame.TransitionType.FRAME_TRANSITION_LINEAR, transitionDuration));
+            shadowScaleTimeline.delegateTimelineDelegate = this;
+            _ = shadowImage.AddTimeline(shadowScaleTimeline);
+            Timeline shadowSpinTimeline = new Timeline().InitWithMaxKeyFramesOnTrack(3);
+            shadowSpinTimeline.AddKeyFrame(KeyFrame.MakeRotation(45, KeyFrame.TransitionType.FRAME_TRANSITION_LINEAR, 0));
+            shadowSpinTimeline.AddKeyFrame(KeyFrame.MakeRotation(405, KeyFrame.TransitionType.FRAME_TRANSITION_LINEAR, 75));
+            shadowSpinTimeline.SetTimelineLoopType(Timeline.LoopType.TIMELINE_REPLAY);
+            _ = shadowImage.AddTimeline(shadowSpinTimeline);
+            shadowImage.PlayTimeline(1);
+            _ = menuView.AddChild(shadowImage);
+            levelsShadow = shadowImage;
+            string packStars = Preferences.GetTotalStarsInPack(pack).ToString(CultureInfo.InvariantCulture) + "/" + (Preferences.GetLevelsInPackCount(pack) * 3).ToString(CultureInfo.InvariantCulture);
+            HBox hBox = MenuTheme.IsExperiments ? CreateExperimentsTextWithStar(packStars) : CreateTextWithStar(packStars);
+
+            hBox.x = -30f;
+            hBox.y = 40f;
+            int levelsInPack = Preferences.GetLevelsInPackCount(pack);
+            int columnsPerRow;
+            float horizontalSpacing;
+            float buttonScale;
+
+            switch (levelsInPack)
+            {
+                case <= 9:
+                    columnsPerRow = 3;
+                    horizontalSpacing = 100f;
+                    buttonScale = 1.25f;
+                    break;
+                case <= 12:
+                    columnsPerRow = 4;
+                    horizontalSpacing = 60f;
+                    buttonScale = 1.25f;
+                    break;
+                default:
+                    columnsPerRow = 5;
+                    horizontalSpacing = 10f;
+                    buttonScale = 1f;
+                    break;
+            }
+
+            float verticalSpacing = 55f;
+            float rowHeight = 203f * buttonScale;
+
+            // The scrollable case can't be fitted (see LayOutLevelSelect), so it keeps composing
+            // against the live viewport width the way it always has; the non-scrollable case
+            // composes against the fixed design width instead, like a menu's content.
+            bool scrollable = levelsInPack > 25;
+            VBox vBox = new VBox().InitWithOffsetAlignWidth(
+                verticalSpacing, 2, scrollable ? VisibleBounds.w : DesignBox.w);
+            vBox.SetName("levelsBox");
+            vBox.x = 0f;
+            float widestRow = 0f;
+            int levelIndex = 0;
+            for (int i = 0; i < levelsInPack; i += columnsPerRow)
+            {
+                HBox levelRow = new HBox().InitWithOffsetAlignHeight(horizontalSpacing, 16, rowHeight);
+                for (int j = 0; j < columnsPerRow && levelIndex < levelsInPack; j++)
+                {
+                    BaseElement levelButton = CreateButtonForLevelPack(levelIndex++, pack);
+                    if (buttonScale != 1f)
+                    {
+                        levelButton.scaleX = buttonScale;
+                        levelButton.scaleY = buttonScale;
+                        levelButton.width = (int)(levelButton.width * buttonScale);
+                        levelButton.height = (int)(levelButton.height * buttonScale);
+                    }
+                    _ = levelRow.AddChild(levelButton);
+                }
+                widestRow = MathF.Max(widestRow, levelRow.width);
+                _ = vBox.AddChild(levelRow);
+            }
+            BaseElement levelsElement;
+            BaseElement levelsRoot;
+            if (scrollable)
+            {
+                float availableHeight = VisibleBounds.h - LevelsTopInset;
+                vBox.y = 0f;
+                vBox.height += (int)LevelsTopInset - 15;
+                levelContainer = new ScrollableContainer().InitWithWidthHeightContainer(VisibleBounds.w, availableHeight, vBox);
+                levelContainer.shouldBounceVertically = true;
+                levelContainer.y = LevelsTopInset;
+                levelsElement = levelContainer;
+                levelsGroup = null;
+                levelsRoot = levelsElement;
+            }
+            else
+            {
+                levelContainer = null;
+                vBox.anchor = vBox.parentAnchor = 9;
+                vBox.y = (DesignBox.h - vBox.height) / 2f;
+                levelsElement = vBox;
+                levelsGridWidth = widestRow;
+
+                FittedGroup group = new() { anchor = 9, parentAnchor = 9 };
+                levelsGroup = group;
+                _ = group.AddChild(levelsElement);
+                levelsRoot = group;
+            }
+            levelsBox = vBox;
+            Timeline levelsFadeTimeline = new Timeline().InitWithMaxKeyFramesOnTrack(3);
+            levelsFadeTimeline.AddKeyFrame(KeyFrame.MakeColor(RGBAColor.solidOpaqueRGBA, KeyFrame.TransitionType.FRAME_TRANSITION_LINEAR, 0));
+            levelsFadeTimeline.AddKeyFrame(KeyFrame.MakeColor(RGBAColor.transparentRGBA, KeyFrame.TransitionType.FRAME_TRANSITION_LINEAR, transitionDuration));
+            _ = levelsElement.AddTimeline(levelsFadeTimeline);
+            hBox.anchor = hBox.parentAnchor = 12;
+            hBox.SetName("starText");
+            hBox.x = -30f;
+            levelsStarText = hBox;
+            Timeline starTextFadeTimeline = new Timeline().InitWithMaxKeyFramesOnTrack(2);
+            starTextFadeTimeline.AddKeyFrame(KeyFrame.MakeColor(RGBAColor.solidOpaqueRGBA, KeyFrame.TransitionType.FRAME_TRANSITION_LINEAR, 0));
+            starTextFadeTimeline.AddKeyFrame(KeyFrame.MakeColor(RGBAColor.transparentRGBA, KeyFrame.TransitionType.FRAME_TRANSITION_LINEAR, transitionDuration));
+            _ = hBox.AddTimeline(starTextFadeTimeline);
+            _ = menuView.AddChild(hBox);
+            _ = menuView.AddChild(levelsRoot);
+            Button backButton = CreateBackButtonWithDelegateID(this, MenuButtonId.PackSelect);
+            backButton.SetName("backButton");
+            Timeline backButtonFadeTimeline = new Timeline().InitWithMaxKeyFramesOnTrack(2);
+            backButtonFadeTimeline.AddKeyFrame(KeyFrame.MakeColor(RGBAColor.solidOpaqueRGBA, KeyFrame.TransitionType.FRAME_TRANSITION_LINEAR, 0));
+            backButtonFadeTimeline.AddKeyFrame(KeyFrame.MakeColor(RGBAColor.transparentRGBA, KeyFrame.TransitionType.FRAME_TRANSITION_LINEAR, transitionDuration));
+            _ = backButton.AddTimeline(backButtonFadeTimeline);
+            _ = menuView.AddChild(backButton);
+            AttachSnowfallOverlay(menuView);
+            AddViewwithID(menuView, 6);
+        }
+
+        /// <summary>
+        /// Initializes the menu controller and creates its child views.
+        /// </summary>
+        /// <param name="parent">Parent view controller.</param>
+        public MenuController(ViewController parent)
+            : base(parent)
+        {
+            ddMainMenu = new DelayedDispatcher();
+            ddPackSelect = new DelayedDispatcher();
+            popUpMenu = new PopUpMenu(this);
+            CreateMainMenu();
+            CreateOptions();
+            CreateReset();
+            CreateLanguageSelection();
+            CreateAbout();
+            CreateCandySelection();
+            CreateMovieView();
+            CreatePackSelect();
+            CreateLeaderboards();
+            CreateAchievements();
+            MapPickerController c = new(this);
+            AddChildwithID(c, 0);
+        }
+
+        /// <inheritdoc />
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing)
+            {
+                if (ddMainMenu != null)
+                {
+                    ddMainMenu.CancelAllDispatches();
+                    ddMainMenu.Dispose();
+                    ddMainMenu = null;
+                }
+                if (ddPackSelect != null)
+                {
+                    ddPackSelect.CancelAllDispatches();
+                    ddPackSelect.Dispose();
+                    ddPackSelect = null;
+                }
+            }
+            base.Dispose(disposing);
+        }
+
+        /// <inheritdoc />
+        public override void Activate()
+        {
+            showNextPackStatus = false;
+            base.Activate();
+            RootController root = Application.SharedRootController();
+            pack = root.Pack;
+            if (IsSinglePack && viewToShow == VIEW_PACK_SELECT)
+            {
+                pack = 0;
+                currentPack = 0;
+                PreLevelSelect();
+                viewToShow = VIEW_LEVEL_SELECT;
+            }
+            if (viewToShow == VIEW_LEVEL_SELECT)
+            {
+                currentPack = pack;
+                PreLevelSelect();
+            }
+            ShowView(viewToShow);
+            SoundMgr.StopMusic();
+            MusicTracks.PlayMenuMusic();
+        }
+
+        /// <summary>
+        /// Advances from the current pack to the next pack or outro flow.
+        /// </summary>
+        public void ShowNextPack()
+        {
+            RootController root = Application.SharedRootController();
+            int currentPackIndex = root.Pack;
+            if (currentPackIndex < Preferences.GetPacksCount() - 1)
+            {
+                packContainer.delegateScrollableContainerProtocol = this;
+                packContainer.MoveToScrollPointmoveMultiplier(currentPackIndex + 1, 0.8f);
+                showNextPackStatus = true;
+                return;
+            }
+            replayingIntroMovie = false;
+            if (PackConfig.OutroVideo != null)
+            {
+                packContainer.PlaceToScrollPoint(root.Pack + 1);
+                SoundMgr.StopMusic();
+                Application.SharedMovieMgr().delegateMovieMgrDelegate = this;
+                Application.SharedMovieMgr().PlayURL(PackConfig.OutroVideo, !Preferences.GetBooleanForKey("MUSIC_ON") && !Preferences.GetBooleanForKey("SOUND_ON"));
+            }
+            else
+            {
+                MoviePlaybackFinished(null);
+            }
+        }
+
+        /// <inheritdoc />
+        public override void OnChildDeactivated(int n)
+        {
+            base.OnChildDeactivated(n);
+            Application.SharedRootController().SetSurvival(false);
+            Deactivate();
+        }
+
+        /// <summary>
+        /// Handles completion of intro or outro movie playback.
+        /// </summary>
+        /// <param name="url">Completed movie URL, or <see langword="null"/> when entering the menu flow directly.</param>
+        public void MoviePlaybackFinished(string url)
+        {
+            bool isOutro = url != null && url == PackConfig.OutroVideo;
+            if (replayingIntroMovie)
+            {
+                replayingIntroMovie = false;
+                ActivateChild(0);
+                return;
+            }
+            if (url != null)
+            {
+                MusicTracks.PlayMenuMusic();
+            }
+            if (IsSinglePack)
+            {
+                pack = 0;
+                currentPack = 0;
+                Preferences.SetLastBox(0);
+                Preferences.SetLastGamePack(PackConfig.GetSaveSlot(0));
+                PreLevelSelect();
+                ShowView(VIEW_LEVEL_SELECT);
+                if (isOutro)
+                {
+                    ShowGameFinishedPopup();
+                }
+                return;
+            }
+            if (!isOutro && Preferences.ShouldPlayLevelScroll())
+            {
+                packContainer.PlaceToScrollPoint(Preferences.GetPacksCount() - 1);
+                packContainer.MoveToScrollPointmoveMultiplier(0, 0.6f);
+                Preferences.DisablePlayLevelScroll();
+            }
+            else
+            {
+                packContainer.PlaceToScrollPoint(Preferences.GetLastBox());
+            }
+            ShowView(5);
+            if (isOutro)
+            {
+                packContainer.PlaceToScrollPoint(Preferences.GetPacksCount() - 1);
+                ShowGameFinishedPopup();
+            }
+        }
+
+        /// <summary>
+        /// Loads pack cover resources and recreates the level selection view before it is shown.
+        /// </summary>
+        public void PreLevelSelect()
+        {
+            levelLaunchPending = false;
+            ResourceMgr resourceMgr = Application.SharedResourceMgr();
+            string[] array = PackConfig.GetBoxCovers(pack);
+            resourceMgr.InitLoading();
+            resourceMgr.LoadPack(array);
+            resourceMgr.LoadImmediately();
+            if (GetView(6) != null)
+            {
+                DeleteView(6);
+            }
+            CreateLevelSelect();
+        }
+
+        /// <inheritdoc />
+        public void TimelineFinished(Timeline t)
+        {
+            SoundMgr.StopMusic();
+            RootController root = Application.SharedRootController();
+            root.Box = PackConfig.GetSaveSlot(pack);
+            root.Pack = pack;
+            root.Level = level;
+            Application.SharedRootController().SetViewTransition(-1);
+            ((MapPickerController)GetChild(0)).SetAutoLoadMap(LevelsList.LEVEL_NAMES[pack, level]);
+            if (pack == 0 && level == 0 && Preferences.GetScoreForPackLevel(0, 0) != 0 && PackConfig.IntroVideo != null)
+            {
+                replayingIntroMovie = true;
+                ShowView(7);
+                SoundMgr.StopMusic();
+                Application.SharedMovieMgr().delegateMovieMgrDelegate = this;
+                Application.SharedMovieMgr().PlayURL(PackConfig.IntroVideo, !Preferences.GetBooleanForKey("MUSIC_ON") && !Preferences.GetBooleanForKey("SOUND_ON"));
+                return;
+            }
+            ActivateChild(0);
+        }
+
+        /// <summary>
+        /// Recreates the options view after localized resources or settings change.
+        /// </summary>
+        public void RecreateOptions()
+        {
+            DeleteView(1);
+            CreateOptions();
+            Relayout(ScreenPresentation.Instance.Snapshot);
+        }
+
+        /// <summary>
+        /// Handles a typed menu button press.
+        /// </summary>
+        /// <param name="n">Menu button identifier that was pressed.</param>
+        public void OnButtonPressed(MenuButtonId n)
+        {
+            if (n.IsLevelButton() && levelLaunchPending)
+            {
+                return;
+            }
+
+            if (n.Value != -1)
+            {
+                SoundMgr.PlaySound(Resources.Snd.Tap);
+            }
+
+            if (n.IsLevelButton())
+            {
+                levelLaunchPending = true;
+                level = n.GetLevelIndex();
+                ActiveView().GetChildWithName("levelsBox").PlayTimeline(0);
+                ActiveView().GetChildWithName("shadow").PlayTimeline(0);
+                ActiveView().GetChildWithName("levelsBack").PlayTimeline(0);
+                ActiveView().GetChildWithName("starText").PlayTimeline(0);
+                ActiveView().GetChildWithName("backButton").PlayTimeline(0);
+                return;
+            }
+
+            if (n.IsLanguageSelectButton())
+            {
+                int langIndex = n.GetLanguageSelectIndex();
+                IReadOnlyList<string> langCodes = LanguageHelper.UiLanguageCodes;
+                if (langIndex >= 0 && langIndex < langCodes.Count)
+                {
+                    string newLocale = langCodes[langIndex];
+                    Application.SharedAppSettings().SetString((int)ApplicationSettings.AppSettings.APP_SETTING_LOCALE, newLocale);
+                    Preferences.SetStringForKey(newLocale, "PREFS_LOCALE", true);
+                    ResourceMgr resourceMgr = Application.SharedResourceMgr();
+                    resourceMgr.FreePack(PackLocalizationMenu);
+                    resourceMgr.ClearCachedFonts();
+                    resourceMgr.InitLoading();
+                    resourceMgr.LoadPack(PackLocalizationMenu);
+                    resourceMgr.LoadImmediately();
+                    DeleteView(VIEW_PACK_SELECT);
+                    CreatePackSelect();
+                    DeleteView(VIEW_MAIN_MENU);
+                    CreateMainMenu();
+                    DeleteView(VIEW_RESET);
+                    CreateReset();
+                    DeleteView(VIEW_LANGUAGE_SELECT);
+                    CreateLanguageSelection();
+                    DeleteView(VIEW_ABOUT);
+                    CreateAbout();
+                    DeleteView(VIEW_CANDY_SELECT);
+                    CreateCandySelection();
+                    CreateLeaderboards();
+                    ddMainMenu.CallObjectSelectorParamafterDelay(new DelayedDispatcher.DispatchFunc(Selector_recreateOptions), null, 0.01f);
+                    Application.SharedRootController().RecreateLoadingController();
+
+                    // Every view above was rebuilt outside a layout pass, the picker on screen
+                    // included, and showing another one begins by drawing that picker to capture
+                    // the screen the crossfade fades from - before the pass inside ShowView runs.
+                    // Placed first, so the fade starts from a menu that is where it belongs rather
+                    // than one still sitting at the design box's own origin.
+                    Relayout(ScreenPresentation.Instance.Snapshot);
+                    ShowView(VIEW_OPTIONS);
+                }
+                return;
+            }
+
+            switch (n)
+            {
+                case var id when id == MenuButtonId.Play:
+                    {
+                        for (int i = 0; i < Preferences.GetPacksCount(); i++)
+                        {
+                            GameController.CheckForBoxPerfect(i);
+                        }
+                        replayingIntroMovie = false;
+                        if (Preferences.GetScoreForPackLevel(0, 0) == 0 && PackConfig.IntroVideo != null)
+                        {
+                            ShowView(7);
+                            SoundMgr.StopMusic();
+                            Application.SharedMovieMgr().delegateMovieMgrDelegate = this;
+                            Application.SharedMovieMgr().PlayURL(PackConfig.IntroVideo, !Preferences.GetBooleanForKey("MUSIC_ON") && !Preferences.GetBooleanForKey("SOUND_ON"));
+                            return;
+                        }
+                        MoviePlaybackFinished(null);
+                        return;
+                    }
+                case var id when id == MenuButtonId.Options:
+                    ShowView(1);
+                    return;
+                case var id when id == MenuButtonId.PlayPack0:
+                    Application.SharedRootController().Box = PackConfig.GetSaveSlot(0);
+                    Application.SharedRootController().Pack = 0;
+                    PreLevelSelect();
+                    Application.SharedRootController().SetViewTransition(-1);
+                    ((MapPickerController)GetChild(0)).SetNormalMode();
+                    ActivateChild(0);
+                    return;
+                case var id when id == MenuButtonId.SurvivalMode:
+                    {
+                        SoundMgr.StopMusic();
+                        pack = 0;
+                        Application.SharedRootController().SetViewTransition(-1);
+                        RootController root = Application.SharedRootController();
+                        ResourceMgr resourceMgr = Application.SharedResourceMgr();
+                        resourceMgr.InitLoading();
+                        resourceMgr.LoadPack(PackConfig.GetBoxCovers(pack));
+                        resourceMgr.LoadImmediately();
+                        root.SetSurvival(true);
+                        root.Box = PackConfig.GetSaveSlot(pack);
+                        root.Pack = pack;
+                        Deactivate();
+                        return;
+                    }
+                case var id when id == MenuButtonId.OpenFullVersion:
+                    RootController.OpenFullVersionPage();
+                    return;
+                case var id when id == MenuButtonId.ToggleSound:
+                    {
+                        bool soundWasOn = Preferences.GetBooleanForKey("SOUND_ON");
+                        Preferences.SetBooleanForKey(!soundWasOn, "SOUND_ON", true);
+                        if (soundWasOn)
+                        {
+                            SoundMgr.SuspendSoundEffects();
+                        }
+                        else
+                        {
+                            SoundMgr.RestoreSoundEffects();
+                        }
+                        return;
+                    }
+                case var id when id == MenuButtonId.ToggleVoice:
+                    ExperimentsVoice.Toggle();
+                    return;
+                case var id when id == MenuButtonId.ToggleMusic:
+                    {
+                        bool musicOn = Preferences.GetBooleanForKey("MUSIC_ON");
+                        Preferences.SetBooleanForKey(!musicOn, "MUSIC_ON", true);
+                        if (musicOn)
+                        {
+                            SoundMgr.StopMusic();
+                            return;
+                        }
+                        MusicTracks.PlayMenuMusic();
+                        return;
+                    }
+                case var id when id == MenuButtonId.ShowCredits:
+                    aboutView?.ResetAndEnableAutoScroll();
+                    ShowView(3);
+                    return;
+                case var id when id == MenuButtonId.ShowReset:
+                    ShowView(4);
+                    return;
+                case var id when id == MenuButtonId.Leaderboards:
+                    break;
+                case var id when id == MenuButtonId.BackToOptions:
+                    ShowView(1);
+                    return;
+                case var id when id == MenuButtonId.ToggleClickToCut:
+                    {
+                        bool clickToCut = Preferences.GetBooleanForKey("PREFS_CLICK_TO_CUT");
+                        Preferences.SetBooleanForKey(!clickToCut, "PREFS_CLICK_TO_CUT", true);
+                        return;
+                    }
+                case var id when id == MenuButtonId.PackSelect:
+                    if (IsSinglePack)
+                    {
+                        ShowView(VIEW_MAIN_MENU);
+                        return;
+                    }
+                    ShowView(5);
+                    packContainer.MoveToScrollPointmoveMultiplier(pack, 0.8f);
+                    return;
+                case var id when id == MenuButtonId.ConfirmResetYes:
+                    {
+                        Preferences preferences = Application.SharedPreferences();
+                        Preferences.ResetToDefaults();
+                        Preferences.RequestSave();
+                        DeleteView(5);
+                        CreatePackSelect();
+                        ShowView(1);
+                        return;
+                    }
+                case var id when id == MenuButtonId.ConfirmResetNo:
+                    ShowView(1);
+                    return;
+                case var id when id == MenuButtonId.PopupOk:
+                    ((Popup)ActiveView().GetChildWithName("popup")).HidePopup();
+                    return;
+                case var id when id == MenuButtonId.OpenTwitter:
+                    OpenUrl("http://twitter.com/zeptolab");
+                    return;
+                case var id when id == MenuButtonId.OpenFacebook:
+                    OpenUrl("http://www.facebook.com/cuttherope");
+                    return;
+                case var id when id == MenuButtonId.LevelEditor:
+                    {
+                        string editorUrl = PlatformServices.Host?.LevelEditorUrl;
+                        if (!string.IsNullOrEmpty(editorUrl))
+                        {
+                            OpenUrl(editorUrl);
+                        }
+                    }
+                    return;
+                case var id when id == MenuButtonId.FanworkProjectWebsite:
+                    OpenUrl(Application.GetString("ABOUT_FANWORK_PROJECT_WEBSITE").ToString());
+                    return;
+                case var id when id == MenuButtonId.FanworkCtrhWebsite:
+                    OpenUrl(Application.GetString("ABOUT_FANWORK_CTRH_WEBSITE").ToString());
+                    return;
+                case var id when id == MenuButtonId.NextPack:
+                    {
+                        int currentPackIndex = currentPack;
+                        int leftScrollCount = scrollPacksLeft + 1;
+                        scrollPacksLeft = leftScrollCount;
+                        int scrollPoint = FixScrollPoint(currentPackIndex + leftScrollCount - scrollPacksRight);
+                        packContainer.MoveToScrollPointmoveMultiplier(scrollPoint, 0.8f);
+                        bScrolling = true;
+
+                        // An arrow moves the strip without the container announcing a new target.
+                        if (MenuTheme.IsExperiments)
+                        {
+                            SteerExperimentsButterfly(scrollPoint);
+                        }
+                        return;
+                    }
+                case var id when id == MenuButtonId.PreviousPack:
+                    {
+                        int currentPackIndex = currentPack;
+                        int rightScrollCount = scrollPacksRight + 1;
+                        scrollPacksRight = rightScrollCount;
+                        int scrollPoint = FixScrollPoint(currentPackIndex - rightScrollCount + scrollPacksLeft);
+                        packContainer.MoveToScrollPointmoveMultiplier(scrollPoint, 0.8f);
+                        bScrolling = true;
+                        if (MenuTheme.IsExperiments)
+                        {
+                            SteerExperimentsButterfly(scrollPoint);
+                        }
+                        break;
+                    }
+                case var id when id == MenuButtonId.ShowLanguage:
+                    ShowView(VIEW_LANGUAGE_SELECT);
+                    return;
+                case var id when id == MenuButtonId.BackFromLanguage:
+                    ShowView(VIEW_OPTIONS);
+                    return;
+                case var id when id == MenuButtonId.BackFromPackSelect || id == MenuButtonId.BackFromOptions || id == MenuButtonId.BackFromLeaderboards || id == MenuButtonId.BackFromAchievements:
+                    ShowView(0);
+                    return;
+                case var id when id == MenuButtonId.QuitGame:
+                    PlatformServices.Host?.Exit();
+                    return;
+                case var id when id == MenuButtonId.ClosePopup:
+                    if (ep != null)
+                    {
+                        ep.HidePopup();
+                        ep = null;
+                        updateReleaseUrl = null;
+                        return;
+                    }
+                    break;
+                case var id when id == MenuButtonId.UpdateDownload:
+                    if (!string.IsNullOrWhiteSpace(updateReleaseUrl))
+                    {
+                        OpenUrl(updateReleaseUrl);
+                    }
+                    if (ep != null)
+                    {
+                        ep.HidePopup();
+                        ep = null;
+                        updateReleaseUrl = null;
+                    }
+                    return;
+                case var id when id == MenuButtonId.ShowQuitPopup:
+                    ShowYesNoPopup(Application.GetString("QUIT"), MenuButtonId.QuitGame, MenuButtonId.ClosePopup);
+                    return;
+                case var id when id == MenuButtonId.BackFromCandySelect:
+                    // Return to main menu from candy selection
+                    // Recreate the main menu to reflect the new candy selection
+                    DeleteView(0);
+                    CreateMainMenu();
+                    ShowView(0);
+                    return;
+                default:
+                    MenuSkinSelectionAction skinAction = MenuSkinSelectionActionResolver.Resolve(n);
+                    if (skinAction.Kind == MenuSkinSelectionActionKind.SwitchMode)
+                    {
+                        if (activeViewID == VIEW_CANDY_SELECT)
+                        {
+                            switch (skinAction.Mode)
+                            {
+                                case SkinSelectionMode.Candy:
+                                    CandySelectionView.SwitchToCandyMode();
+                                    break;
+                                case SkinSelectionMode.Rope:
+                                    CandySelectionView.SwitchToRopeMode();
+                                    break;
+                                case SkinSelectionMode.OmNom:
+                                    CandySelectionView.SwitchToOmNomMode();
+                                    break;
+                                case SkinSelectionMode.Trace:
+                                    CandySelectionView.SwitchToTraceMode();
+                                    break;
+                                default:
+                                    throw new InvalidOperationException($"Unhandled {nameof(SkinSelectionMode)}: {skinAction.Mode}.");
+                            }
+                        }
+                        else if (skinAction.Mode == SkinSelectionMode.Candy)
+                        {
+                            Preferences.SetBooleanForKey(true, "PREFS_CANDY_WAS_CHANGED", true);
+                            ShowView(VIEW_CANDY_SELECT);
+                        }
+
+                        return;
+                    }
+
+                    if (skinAction.Kind == MenuSkinSelectionActionKind.SelectSlot
+                        && skinAction.PreferenceKey != null
+                        && skinAction.SelectedIndex.HasValue)
+                    {
+                        int selectedIndex = skinAction.SelectedIndex.Value;
+                        Preferences.SetIntForKey(selectedIndex, skinAction.PreferenceKey, true);
+
+                        switch (skinAction.Mode)
+                        {
+                            case SkinSelectionMode.Candy:
+                            case SkinSelectionMode.Rope:
+                            case SkinSelectionMode.Trace:
+                                CandySelectionView.UpdateCandySlotButtons(selectedIndex);
+                                break;
+                            case SkinSelectionMode.OmNom:
+                                CandySelectionView.SelectOmNomSlot(selectedIndex);
+                                break;
+                            default:
+                                throw new InvalidOperationException($"Unhandled {nameof(SkinSelectionMode)}: {skinAction.Mode}.");
+                        }
+
+                        return;
+                    }
+
+                    // Handle pack selection buttons dynamically
+                    if (n.IsPackButton())
+                    {
+                        int targetPack = n.GetPackIndex();
+                        if (pack != targetPack)
+                        {
+                            packContainer.MoveToScrollPointmoveMultiplier(targetPack, 0.8f);
+                            return;
+                        }
+                        Preferences.SetLastBox(pack);
+                        Preferences.SetLastGamePack(PackConfig.GetSaveSlot(pack));
+                        bool targetPackLocked = Preferences.GetUnlockedForPackLevel(targetPack, 0) == UNLOCKEDSTATE.LOCKED && targetPack != Preferences.GetPacksCount();
+                        if (targetPack != Preferences.GetPacksCount() && !targetPackLocked)
+                        {
+                            PreLevelSelect();
+                            ShowView(6);
+                            return;
+                        }
+                    }
+                    return;
+            }
+        }
+
+        /// <inheritdoc />
+        void IButtonDelegation.OnButtonPressed(ButtonId buttonId)
+        {
+            OnButtonPressed(MenuButtonId.FromButtonId(buttonId));
+        }
+
+        /// <summary>
+        /// Clamps a requested pack scroll point to the available scroll point range.
+        /// </summary>
+        /// <param name="moveToPack">Requested pack scroll point.</param>
+        /// <returns>The clamped scroll point.</returns>
+        private int FixScrollPoint(int moveToPack)
+        {
+            if (moveToPack >= packContainer.TotalScrollPoints)
+            {
+                moveToPack = packContainer.TotalScrollPoints - 1;
+            }
+            else if (moveToPack < 0)
+            {
+                moveToPack = 0;
+            }
+            return moveToPack;
+        }
+
+        /// <inheritdoc />
+        public override void Update(float delta)
+        {
+            base.Update(delta);
+            MovieMgr movieMgr = Application.SharedMovieMgr();
+            if (movieMgr.IsPlaying())
+            {
+                movieMgr.Update();
+                return;
+            }
+            TryShowOutdatedWindowsPopup();
+            TryShowPrereleasePopup();
+            TryShowUpdatePopup();
+            if (activeViewID == VIEW_ABOUT && aboutView != null && aboutView.UpdateAutoScroll())
+            {
+                return;
+            }
+            if (activeViewID == VIEW_CANDY_SELECT)
+            {
+                CandySelectionView.Update(delta);
+                return;
+            }
+            if (activeViewID == 5 && ddPackSelect != null)
+            {
+                ddPackSelect.Update(delta);
+                if (MenuTheme.IsExperiments)
+                {
+                    UpdateExperimentsPackSelect();
+                }
+                if (PlatformServices.Host?.IsKeyPressed(KeyCode.Left) == true)
+                {
+                    OnButtonPressed(MenuButtonId.PreviousPack);
+                    return;
+                }
+                if (PlatformServices.Host?.IsKeyPressed(KeyCode.Right) == true)
+                {
+                    OnButtonPressed(MenuButtonId.NextPack);
+                    return;
+                }
+                if ((PlatformServices.Host?.IsKeyPressed(KeyCode.Space) == true || PlatformServices.Host?.IsKeyPressed(KeyCode.Enter) == true) && !bScrolling)
+                {
+                    OnButtonPressed(MenuButtonId.ForPack(currentPack));
+                    return;
+                }
+            }
+            else
+            {
+                if (activeViewID == 0 && ddMainMenu != null)
+                {
+                    ddMainMenu.Update(delta);
+                    return;
+                }
+                if (activeViewID == 1 && ddMainMenu != null)
+                {
+                    ddMainMenu.Update(delta);
+                }
+            }
+        }
+
+        /// <inheritdoc />
+        public override bool HandleMouseWheel(int scrollDelta)
+        {
+            // Give popup scrollable content first chance to handle mouse wheel.
+            if (ActiveView() != null)
+            {
+                BaseElement popupElement = ActiveView().GetChildWithName("popup");
+                if (popupElement is Popup popup && popup.HandleMouseWheel(scrollDelta))
+                {
+                    return true;
+                }
+            }
+
+            // Handle scroll wheel for level selection view
+            if (activeViewID == VIEW_LEVEL_SELECT && levelContainer != null)
+            {
+                levelContainer.HandleMouseWheel(scrollDelta);
+                return true;
+            }
+
+            // Handle scroll wheel for candy selection view
+            if (activeViewID == VIEW_CANDY_SELECT && candyContainer != null)
+            {
+                candyContainer.HandleMouseWheel(scrollDelta);
+                return true;
+            }
+
+            // Handle scroll wheel for about/credits view (activeViewID == VIEW_ABOUT)
+            if (activeViewID == VIEW_ABOUT && aboutView != null && aboutView.HandleMouseWheel(scrollDelta))
+            {
+                return true;
+            }
+
+            // Not handled by this controller, allow base class to handle
+            return base.HandleMouseWheel(scrollDelta);
+        }
+
+        /// <inheritdoc />
+        public override bool TouchesBeganwithEvent(IList<TouchLocation> touches)
+        {
+            bool handledByBase = base.TouchesBeganwithEvent(touches);
+            if (activeViewID == VIEW_ABOUT)
+            {
+                aboutView?.DisableAutoScroll();
+            }
+            return handledByBase;
+        }
+
+        /// <inheritdoc />
+        public void TimelinereachedKeyFramewithIndex(Timeline t, KeyFrame k, int i)
+        {
+        }
+
+        /// <inheritdoc />
+        public override void FullscreenToggled(bool isFullscreen)
+        {
+            DeleteView(5);
+            CreatePackSelect();
+            Relayout(ScreenPresentation.Instance.Snapshot);
+        }
+
+        /// <summary>
+        /// Delayed-dispatcher callback that recreates the options view.
+        /// </summary>
+        /// <param name="param">Unused dispatcher parameter.</param>
+        public void Selector_recreateOptions(FrameworkTypes param)
+        {
+            RecreateOptions();
+        }
+
+        /// <inheritdoc />
+        public override bool BackButtonPressed()
+        {
+            int currentViewId = activeViewID;
+            if (currentViewId == 0)
+            {
+                if (ep != null)
+                {
+                    OnButtonPressed(MenuButtonId.ClosePopup);
+                }
+                else if (PlatformServices.Host?.CanExit == true)
+                {
+                    // Where the game cannot close itself there is no quit prompt to raise, so
+                    // back on the main menu does nothing rather than offering a dead button.
+                    OnButtonPressed(MenuButtonId.ShowQuitPopup);
+                }
+            }
+            switch (currentViewId)
+            {
+                case 1:
+                    OnButtonPressed(MenuButtonId.BackFromOptions);
+                    break;
+                case 3:
+                case 4:
+                    OnButtonPressed(MenuButtonId.BackToOptions);
+                    break;
+                case VIEW_LANGUAGE_SELECT:
+                    OnButtonPressed(MenuButtonId.BackFromLanguage);
+                    break;
+                case 5:
+                    OnButtonPressed(MenuButtonId.BackFromPackSelect);
+                    break;
+                case 6:
+                    OnButtonPressed(MenuButtonId.PackSelect);
+                    break;
+                case VIEW_CANDY_SELECT:
+                    OnButtonPressed(MenuButtonId.BackFromCandySelect);
+                    break;
+                default:
+                    break;
+            }
+            return true;
+        }
+
+        /// <summary>
+        /// Shows the outdated Windows popup once when the main menu is active and the platform needs it.
+        /// </summary>
+        private void TryShowOutdatedWindowsPopup()
+        {
+            if (outdatedWindowsPopupShown)
+            {
+                return;
+            }
+
+            if (activeViewID != VIEW_MAIN_MENU)
+            {
+                return;
+            }
+
+            if (!WindowsVersionChecker.IsOutdatedWindows())
+            {
+                return;
+            }
+
+            outdatedWindowsPopupShown = true;
+            WindowsVersionChecker.ShowOutdatedWindowsPopup(popUpMenu.builder);
+        }
+
+        /// <summary>
+        /// Shows the testing-version notice on the main menu, once per prerelease version.
+        /// </summary>
+        /// <remarks>
+        /// Waits for any popup already on screen, such as the outdated Windows warning, so the two
+        /// are not stacked on top of each other.
+        /// </remarks>
+        private void TryShowPrereleasePopup()
+        {
+            if (prereleasePopupShown)
+            {
+                return;
+            }
+
+            if (activeViewID != VIEW_MAIN_MENU)
+            {
+                return;
+            }
+
+            if (!PrereleaseNotice.IsDue(AppVersion.Current))
+            {
+                prereleasePopupShown = true;
+                return;
+            }
+
+            if (ActiveView().GetChildWithName("popup") != null)
+            {
+                return;
+            }
+
+            prereleasePopupShown = true;
+            PrereleaseNotice.Show(popUpMenu.builder, AppVersion.Current);
+        }
+
+        /// <summary>
+        /// Shows the update-available popup once when update information is ready on the main menu.
+        /// </summary>
+        private void TryShowUpdatePopup()
+        {
+            if (updatePopupShown)
+            {
+                return;
+            }
+
+            if (activeViewID != VIEW_MAIN_MENU)
+            {
+                return;
+            }
+
+            if (!Preferences.IsUpdateCheckEnabled())
+            {
+                return;
+            }
+
+            if (PlatformServices.Updates == null || !PlatformServices.Updates.TryConsumeUpdate(out UpdateInfo info))
+            {
+                return;
+            }
+
+            updatePopupShown = true;
+            updateReleaseUrl = info.ReleaseUrl;
+            ep = popUpMenu.ShowUpdateAvailablePopup(info.CurrentVersion, info.LatestVersion, MenuButtonId.UpdateDownload, MenuButtonId.ClosePopup);
+        }
+
+        /// <summary>Main menu view identifier.</summary>
+        public const int VIEW_MAIN_MENU = 0;
+
+        /// <summary>Options view identifier.</summary>
+        public const int VIEW_OPTIONS = 1;
+
+        /// <summary>Help view identifier.</summary>
+        public const int VIEW_HELP = 2;
+
+        /// <summary>About and credits view identifier.</summary>
+        public const int VIEW_ABOUT = 3;
+
+        /// <summary>Reset-confirmation view identifier.</summary>
+        public const int VIEW_RESET = 4;
+
+        /// <summary>Pack selection view identifier.</summary>
+        public const int VIEW_PACK_SELECT = 5;
+
+        /// <summary>Level selection view identifier.</summary>
+        public const int VIEW_LEVEL_SELECT = 6;
+
+        /// <summary>Whether the game is configured with a single playable pack.</summary>
+        private static bool IsSinglePack => Preferences.GetPacksCount() == 1;
+
+        /// <summary>Movie playback view identifier.</summary>
+        public const int VIEW_MOVIE = 7;
+
+        /// <summary>Leaderboards view identifier.</summary>
+        public const int VIEW_LEADERBOARDS = 8;
+
+        /// <summary>Achievements view identifier.</summary>
+        public const int VIEW_ACHIEVEMENTS = 9;
+
+        /// <summary>Candy and skin selection view identifier.</summary>
+        public const int VIEW_CANDY_SELECT = 10;
+
+        /// <summary>Language selection view identifier.</summary>
+        public const int VIEW_LANGUAGE_SELECT = 11;
+
+        /// <summary>Delayed dispatcher used by the main menu and options view.</summary>
+        public DelayedDispatcher ddMainMenu;
+
+        /// <summary>Delayed dispatcher used by the pack selection view.</summary>
+        public DelayedDispatcher ddPackSelect;
+
+        /// <summary>Popup menu helper used for menu popups.</summary>
+        private readonly PopUpMenu popUpMenu;
+
+        /// <summary>Scrollable container for candy and skin selection.</summary>
+        private ScrollableContainer candyContainer;
+
+        /// <summary>Scrollable container for pack selection.</summary>
+        private ScrollableContainer packContainer;
+
+        /// <summary>Scrollable container for level selection when a pack has many levels.</summary>
+        private ScrollableContainer levelContainer;
+
+        /// <summary>Pack box elements shown in the pack selection container.</summary>
+        private readonly BaseElement[] boxes = new BaseElement[Preferences.GetPacksCount() + 1];
+
+        /// <summary>Whether to show the next-pack unlock status after scrolling.</summary>
+        private bool showNextPackStatus;
+
+        /// <summary>Whether the intro movie is being replayed before entering gameplay.</summary>
+        private bool replayingIntroMovie;
+
+        /// <summary>Currently selected pack index in the pack selection view.</summary>
+        private int currentPack;
+
+        /// <summary>Pending leftward pack scroll count from repeated next-button presses.</summary>
+        private int scrollPacksLeft;
+
+        /// <summary>Pending rightward pack scroll count from repeated previous-button presses.</summary>
+        private int scrollPacksRight;
+
+        /// <summary>Whether the pack container is currently auto-scrolling.</summary>
+        private bool bScrolling;
+
+        /// <summary>Next-pack arrow button.</summary>
+        private Button nextb;
+
+        /// <summary>Previous-pack arrow button.</summary>
+        private Button prevb;
+
+        /// <summary>Current pack index used for level selection and gameplay launch.</summary>
+        private int pack;
+
+        /// <summary>Current level index used for gameplay launch.</summary>
+        private int level;
+
+        /// <summary>Whether a level selection is already transitioning into its launch flow.</summary>
+        private bool levelLaunchPending;
+
+        /// <summary>View identifier to show when the menu controller is activated.</summary>
+        public int viewToShow;
+
+        /// <summary>Currently displayed popup, if any.</summary>
+        private Popup ep;
+
+        /// <summary>Release URL opened by the update popup download button.</summary>
+        private string updateReleaseUrl;
+
+        /// <summary>Whether the update-available popup has already been shown.</summary>
+        private bool updatePopupShown;
+
+        /// <summary>Whether the outdated Windows popup has already been shown.</summary>
+        private bool outdatedWindowsPopupShown;
+
+        /// <summary>Whether the prerelease notice has been dealt with this session.</summary>
+        private bool prereleasePopupShown;
+
+        /// <summary>Localized menu resource pack reloaded when the UI language changes.</summary>
+        private static readonly string[] PackLocalizationMenu = [Resources.Img.MenuExtraButtonsEn];
+
+        /// <summary>About view instance used for credits auto-scroll handling.</summary>
+        private AboutView aboutView;
+
+        /// <summary>
+        /// Touchable wrapper element that sends menu button IDs through the button delegate.
+        /// </summary>
+        public sealed class TouchBaseElement : BaseElement
+        {
+            /// <inheritdoc />
+            public override bool OnTouchDownXY(float tx, float ty)
+            {
+                _ = base.OnTouchDownXY(tx, ty);
+                Rectangle r = MakeRectangle(drawX + bbc.x, drawY + bbc.y, width + bbc.w, height + bbc.h);
+                Rectangle rectangle = RectInRectIntersection(VisibleBounds, r);
+                if (PointInRect(tx, ty, r.x, r.y, r.w, r.h) && rectangle.w > r.w / 2)
+                {
+                    delegateValue.OnButtonPressed(bid);
+                    return true;
+                }
+                return false;
+            }
+
+            /// <summary>Menu button identifier emitted when this element is touched.</summary>
+            public MenuButtonId bid;
+
+            /// <summary>Touch rectangle adjustment applied relative to the element bounds.</summary>
+            public Rectangle bbc;
+
+            /// <summary>Delegate that receives touch activation events.</summary>
+            public IButtonDelegation delegateValue;
+        }
+
+        /// <summary>
+        /// Draws a colored rectangle background for Om Nom in the pack selection menu.
+        /// Uses scissor clipping to reveal Om Nom as the box scrolls into view.
+        /// </summary>
+        public sealed class MonsterSlot : ColorRect
+        {
+            /// <summary>
+            /// Quad index for the box background in MenuPackUI texture.
+            /// </summary>
+            private const int QuadIndex = 0;
+
+            /// <summary>
+            /// Creates a new <see cref="MonsterSlot"/> with the specified background color.
+            /// Dimensions and positioning are derived from the MenuPackUI texture.
+            /// </summary>
+            /// <param name="color">Background fill color for the slot.</param>
+            /// <param name="strip">Layout the pack strip is built at.</param>
+            /// <returns>A new <see cref="MonsterSlot"/> instance.</returns>
+            public static MonsterSlot Create(RGBAColor color, PackStripLayout strip)
+            {
+                Texture2D texture = Application.GetTexture(Resources.Img.MenuPackUI);
+                MonsterSlot slot = new()
+                {
+                    width = (int)MathF.Round(texture.preCutSize.X * strip.Scale),
+                    height = (int)MathF.Round(texture.preCutSize.Y * strip.Scale),
+                    FillColor = color,
+                    quadOffset = texture.quadOffsets[QuadIndex],
+                    quadSize = Vect(texture.quadRects[QuadIndex].w, texture.quadRects[QuadIndex].h)
+                };
+                return slot;
+            }
+
+            /// <summary>
+            /// The window the hole in a box exposes Om Nom through.
+            /// </summary>
+            /// <remarks>
+            /// Om Nom is drawn where the selected box comes to rest and stays there; the hole
+            /// travels with its box, so what shows of him is whatever the hole is over. The window
+            /// is the hole's own place in the artwork, taken at the strip's scale and clipped to
+            /// the strip, so a box scrolling out of view cannot reveal him past its edge.
+            /// </remarks>
+            /// <param name="boxLeft">Left edge of the box the hole is in, in logical space.</param>
+            /// <param name="scale">Scale the strip is drawn at.</param>
+            /// <param name="strip">The scrolling strip's rectangle, in logical space.</param>
+            /// <returns>The window, empty when the hole is outside the strip.</returns>
+            public static Rectangle RevealWindow(float boxLeft, float scale, Rectangle strip)
+            {
+                float left = MathF.Max(boxLeft + (RevealInset * scale), strip.x);
+                float right = MathF.Min(boxLeft + ((RevealInset + RevealWidth) * scale), strip.x + strip.w);
+                return MakeRectangle(left, 0f, MathF.Max(0f, right - left), VisibleBounds.h);
+            }
+
+            /// <inheritdoc/>
+            /// <remarks>
+            /// The scale is read here rather than kept from when the slot was built, so there is
+            /// no second copy of it to fall behind the viewport. The slot carries no transform of
+            /// its own, which is what keeps the window it clips to in the same space the
+            /// container's own scissor rectangle is in.
+            /// </remarks>
+            public override void Draw()
+            {
+                PreDraw();
+                float scale = PackStrip().Scale;
+
+                // Draw the colored rectangle at the quad offset position
+                DrawHelper.DrawSolidRectWOBorder(
+                    drawX + (quadOffset.X * scale),
+                    drawY + (quadOffset.Y * scale),
+                    quadSize.X * scale,
+                    quadSize.Y * scale,
+                    FillColor);
+
+                // Apply scissor clipping to reveal Om Nom during scroll animation
+                Rectangle strip = MakeRectangle(c.drawX, c.drawY, c.width, c.height);
+                Rectangle window = RevealWindow(drawX, scale, strip);
+                if (window.w <= 0f)
+                {
+                    return;
+                }
+
+                Renderer.SetScissor(window.x, window.y, window.w, window.h);
+                PostDraw();
+                Renderer.SetScissor(strip.x, strip.y, strip.w, strip.h);
+            }
+
+            /// <summary>Reference to the scrollable container the slot scrolls inside.</summary>
+            public ScrollableContainer c;
+
+            /// <summary>Authored distance from the left edge of a box to the hole in it.</summary>
+            private const float RevealInset = 240f;
+
+            /// <summary>Authored width of the hole in a box.</summary>
+            private const float RevealWidth = 200f;
+
+            /// <summary>Offset within the preCut area where the quad is drawn.</summary>
+            private Vector quadOffset;
+
+            /// <summary>Actual size of the colored rectangle to draw.</summary>
+            private Vector quadSize;
+        }
+    }
+}

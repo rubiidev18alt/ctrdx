@@ -1,0 +1,98 @@
+using CutTheRopeDX.Framework;
+using CutTheRopeDX.Framework.Core;
+using CutTheRopeDX.Framework.Platform;
+using CutTheRopeDX.Framework.Visual;
+
+namespace CutTheRopeDX.GameMain
+{
+    /// <summary>
+    /// Gameplay view that draws the active scene, pause overlay, restart controls, and results elements.
+    /// </summary>
+    internal sealed class GameView : View
+    {
+        /// <inheritdoc />
+        public override void Show()
+        {
+            base.Show();
+        }
+
+        /// <inheritdoc />
+        public override void Hide()
+        {
+            base.Hide();
+        }
+
+        /// <inheritdoc />
+        public override void Draw()
+        {
+            PlatformServices.Cursor?.Enable(true);
+            int childCount = ChildsCount();
+            for (int i = 0; i < childCount; i++)
+            {
+                BaseElement child = GetChild(i);
+                if (child != null && child.visible)
+                {
+                    if (i == 3)
+                    {
+                        Renderer.Disable(Renderer.GL_TEXTURE_2D);
+                        Renderer.Enable(Renderer.GL_BLEND);
+                        Renderer.SetBlendFunc(BlendingFactor.GLSRCALPHA, BlendingFactor.GLONEMINUSSRCALPHA);
+                        DrawHelper.DrawSolidRectWOBorder(0f, 0f, VisibleBounds.w, VisibleBounds.h, RGBAColor.MakeRGBA(0.1f, 0.1f, 0.1f, 0.5f));
+                        Renderer.SetColor(Color.White);
+                        Renderer.Enable(Renderer.GL_TEXTURE_2D);
+                    }
+                    child.Draw();
+                }
+                if (i == VIEW_ELEMENT_RESTART_BUTTON)
+                {
+                    // Over the HUD buttons, since a press on them only dismisses it, but under the
+                    // pause menu. The scene draws untransformed, so its screen space is this one.
+                    ((GameScene)GetChild(VIEW_ELEMENT_GAME_SCENE)).DrawEasterEgg();
+                }
+            }
+            GameScene gameScene = (GameScene)GetChild(0);
+            if (gameScene.gameplayFlow.DimTime > 0)
+            {
+                float dimAlpha = gameScene.gameplayFlow.DimTime / LevelFlowState.DimDuration;
+                if (gameScene.gameplayFlow.IsFadingOut)
+                {
+                    dimAlpha = 1f - dimAlpha;
+                }
+                Renderer.Disable(Renderer.GL_TEXTURE_2D);
+                Renderer.Enable(Renderer.GL_BLEND);
+                Renderer.SetBlendFunc(BlendingFactor.GLSRCALPHA, BlendingFactor.GLONEMINUSSRCALPHA);
+                DrawHelper.DrawSolidRectWOBorder(0f, 0f, VisibleBounds.w, VisibleBounds.h, RGBAColor.MakeRGBA(1, 1, 1, dimAlpha));
+                Renderer.SetColor(Color.White);
+                Renderer.Enable(Renderer.GL_TEXTURE_2D);
+            }
+        }
+
+        /// <summary>Child index for the active game scene.</summary>
+        public const int VIEW_ELEMENT_GAME_SCENE = 0;
+
+        /// <summary>Child index for the pause button.</summary>
+        public const int VIEW_ELEMENT_PAUSE_BUTTON = 1;
+
+        /// <summary>Child index for the restart button.</summary>
+        public const int VIEW_ELEMENT_RESTART_BUTTON = 2;
+
+        /// <summary>Child index for the pause menu overlay.</summary>
+        public const int VIEW_ELEMENT_PAUSE_MENU = 3;
+
+        /// <summary>Child index for the results view.</summary>
+        public const int VIEW_ELEMENT_RESULTS = 4;
+
+        /// <summary>
+        /// Child index for the pause menu's button column. Separate from
+        /// <see cref="VIEW_ELEMENT_PAUSE_MENU"/> (the plate backdrop) because the column is a
+        /// design-space composition fitted independently, while the plate stays sized to its own
+        /// art and the best-score label pinned against it stays in logical units.
+        /// </summary>
+        /// <remarks>
+        /// <see cref="Draw"/> walks child ids <c>0..ChildsCount()-1</c> assuming no gaps, so this
+        /// is placed right after the always-present children rather than after the optional snow
+        /// overlay, which is bumped to the next id instead.
+        /// </remarks>
+        public const int VIEW_ELEMENT_PAUSE_BUTTONS = 5;
+    }
+}

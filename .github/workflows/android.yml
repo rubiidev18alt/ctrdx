@@ -1,0 +1,185 @@
+name: Build Android APK
+
+# The asset archive and converted payload are large, so this is an on-demand build rather
+# than something that runs for every pull request. The PR quality workflow separately checks
+# that the Android project and asset packaging still compile.
+on:
+    workflow_dispatch:
+
+permissions:
+    contents: read
+
+concurrency:
+    group: android-apk-${{ github.ref }}
+    cancel-in-progress: false
+
+jobs:
+    # Fetch and verify the original assets once, then share the existing content cache with
+    # the packaging job. No proprietary asset archive is stored in this repository.
+    content:
+        uses: ./.github/workflows/content.yml
+
+    apk:
+        needs: content
+        runs-on: ubuntu-latest
+        env:
+            # android-arm is .NET's 32-bit ARMv7 RID. Build both phone ABIs from the
+            # same converted content; each RID still gets its own publish directory.
+            RIDS: "android-arm64 android-arm"
+        steps:
+            - uses: actions/checkout@v7
+
+            - uses: ./.github/actions/setup-dotnet
+
+            - name: Set up JDK 21
+              uses: actions/setup-java@v6
+              with:
+                  java-version: "21"
+                  distribution: temurin
+
+            - name: Set up Android SDK
+              uses: android-actions/setup-android@v4
+              with:
+                  packages: "platform-tools platforms;android-36 build-tools;36.0.0"
+                  log-accepted-android-sdk-licenses: "false"
+
+            - name: Install Android workload
+              run: dotnet workload install android
+
+            - name: Restore fetched assets
+              uses: actions/cache/restore@v6
+              with:
+                  path: ${{ needs.content.outputs.cache-path }}
+                  key: ${{ needs.content.outputs.cache-key }}
+                  enableCrossOsArchive: true
+                  fail-on-cache-miss: true
+
+            - name: Set up Python
+              uses: actions/setup-python@v7
+              with:
+                  python-version: "3.14"
+                  cache: pip
+                  cache-dependency-path: scripts/requirements.txt
+
+            - name: Install content conversion dependencies
+              run: python3 -m pip install -r scripts/requirements.txt
+
+            # Use the same pinned FFmpeg 9 build as the browser and desktop workflows. The
+            # converter requires libopus for audio and libvpx-vp9 for the cutscenes.
+            - name: Install pinned FFmpeg
+              id: ffmpeg
+              run: |
+                  SCRIPT=distribution/download_ffmpeg_linux.sh
+                  TAG=$(sed -n 's/^FFMPEG_BUILD_TAG="\(.*\)"$/\1/p' "$SCRIPT")
+                  VERSION=$(sed -n 's/^FFMPEG_BUILD_VERSION="\(.*\)"$/\1/p' "$SCRIPT")
+                  test -n "$TAG" && test -n "$VERSION"
+                  RELEASE="https://github.com/yell0wsuit/ffmpeg-pin/releases/download/$TAG"
+                  [[ $VERSION =~ ^n([0-9]+\.[0-9]+) ]]
+                  SERIES=${BASH_REMATCH[1]}
+                  test -n "$SERIES"
+                  ARCHIVE="ffmpeg-$VERSION-linux64-lgpl-$SERIES.tar.xz"
+                  cd "$RUNNER_TEMP"
+                  curl -fsSL --retry 3 -O "$RELEASE/$ARCHIVE" -O "$RELEASE/checksums.sha256"
+                  grep " $ARCHIVE\$" checksums.sha256 | sha256sum -c -
+                  tar -xf "$ARCHIVE"
+                  FFMPEG="$RUNNER_TEMP/${ARCHIVE%.tar.xz}/bin/ffmpeg"
+                  "$FFMPEG" -hide_banner -encoders | grep -q libopus
+                  "$FFMPEG" -hide_banner -encoders | grep -q libvpx-vp9
+                  echo "CTRDX_FFMPEG=$FFMPEG" >> "$GITHUB_ENV"
+                  echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+            - name: Cache converted Android content
+              uses: actions/cache@v6
+              with:
+                  path: src/CutTheRopeDX.Android/Assets/content
+                  key: android-content-${{ steps.ffmpeg.outputs.tag }}-${{ needs.content.outputs.cache-key }}-${{ hashFiles('scripts/build_web_content.py', 'scripts/webcontent/**/*.py') }}
+                  restore-keys: |
+                      android-content-${{ steps.ffmpeg.outputs.tag }}-
+
+            - name: Convert content for Android
+              run: >-
+                  python3 scripts/build_web_content.py
+                  --source content
+                  --out src/CutTheRopeDX.Android/Assets/content
+                  --require-video
+                  --no-progress
+
+            # BuildContent=false because the verified assets were fetched and converted above.
+            # Normal command-line Android publish signs the APK; AndroidKeyStore=false selects
+            # the standard generated debug key, so no repository secrets are needed. Release
+            # signing remains a local concern.
+            - name: Publish signed ARM64 and ARMv7 APKs
+              run: |
+                  for rid in $RIDS; do
+                      dotnet publish src/CutTheRopeDX.Android/CutTheRopeDX.Android.csproj \
+                          -c Release \
+                          -f net10.0-android \
+                          -r "$rid" \
+                          -p:BuildContent=false \
+                          -p:DeployContent=false \
+                          -p:DeployAndroidContent=true \
+                          -p:AndroidKeyStore=false
+                  done
+
+            # Publish can leave both an unsigned package and a signed package in the output.
+            # Select and stage only the signed artifacts so the downloads are unambiguous.
+            - name: Verify and stage both APKs
+              run: |
+                  python3 - <<'PY'
+                  import os
+                  from pathlib import Path
+                  import shutil
+                  import subprocess
+                  import zipfile
+
+                  rids = os.environ["RIDS"].split()
+                  assert rids, "No Android RIDs configured"
+                  sdk = os.environ.get("ANDROID_SDK_ROOT") or os.environ["ANDROID_HOME"]
+                  apksigner = Path(sdk) / "build-tools/36.0.0/apksigner"
+                  staging = Path(os.environ["RUNNER_TEMP"]) / "ctrdx-apk"
+                  staging.mkdir(parents=True, exist_ok=True)
+
+                  for rid in rids:
+                      root = Path("src/CutTheRopeDX.Android/bin/Release/net10.0-android") / rid
+                      signed = sorted((root / "publish").glob("*-Signed.apk"))
+                      if not signed:
+                          signed = sorted(root.glob("*-Signed.apk"))
+                      assert len(signed) == 1, f"Expected one signed {rid} APK under {root}, found {signed}"
+                      apk = signed[0]
+                      with zipfile.ZipFile(apk) as package:
+                          names = package.namelist()
+                          for extension in (".webp", ".ogg", ".webm"):
+                              assert any(name.startswith("assets/content/") and name.endswith(extension) for name in names), (
+                                  f"{apk}: no packaged {extension} content"
+                              )
+                          assert any(name.startswith("assets/content/video_hd/") and name.endswith(".webm") for name in names), (
+                              f"{apk}: no packaged cutscene content"
+                          )
+                          for name in names:
+                              if name.startswith("assets/content/") and name.endswith((".ogg", ".webm")):
+                                  assert package.getinfo(name).compress_type == zipfile.ZIP_STORED, (
+                                      f"{apk}: {name} is compressed; AssetManager.OpenFd would fail"
+                                  )
+                      subprocess.run([str(apksigner), "verify", str(apk)], check=True)
+                      destination = staging / f"CutTheRopeDX-{rid}.apk"
+                      shutil.copy2(apk, destination)
+                      print(f"Verified and staged signed real-content {rid} APK: {destination}")
+                  PY
+
+            - name: Upload ARM64 APK
+              uses: actions/upload-artifact@v7
+              with:
+                  name: ctrdx-android-arm64
+                  path: ${{ runner.temp }}/ctrdx-apk/CutTheRopeDX-android-arm64.apk
+                  if-no-files-found: error
+                  compression-level: 0
+                  retention-days: 7
+
+            - name: Upload ARMv7 APK
+              uses: actions/upload-artifact@v7
+              with:
+                  name: ctrdx-android-arm
+                  path: ${{ runner.temp }}/ctrdx-apk/CutTheRopeDX-android-arm.apk
+                  if-no-files-found: error
+                  compression-level: 0
+                  retention-days: 7

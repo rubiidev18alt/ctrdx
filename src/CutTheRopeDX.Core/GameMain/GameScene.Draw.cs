@@ -1,0 +1,385 @@
+using System;
+using System.Linq;
+
+using CutTheRopeDX.Framework;
+using CutTheRopeDX.Framework.Core;
+using CutTheRopeDX.Framework.Helpers;
+using CutTheRopeDX.Framework.Platform;
+using CutTheRopeDX.Framework.Visual;
+
+namespace CutTheRopeDX.GameMain
+{
+    internal sealed partial class GameScene
+    {
+        /// <inheritdoc />
+        public override void Draw()
+        {
+            Renderer.Clear(0);
+            PreDraw();
+            camera.ApplyCameraTransformation();
+            Renderer.Enable(Renderer.GL_TEXTURE_2D);
+            Renderer.Disable(Renderer.GL_BLEND);
+            if (backTexture != null)
+            {
+                // Recompute in case the camera's fit, the internal resolution or the texture
+                // dimensions changed.
+                float desiredScale = GetBackgroundCoverScale(backTexture);
+                if (MathF.Abs(desiredScale - backgroundScale) > 0.0001f)
+                {
+                    UpdateBackgroundScale();
+                }
+            }
+            float backScale = back?.scaleX ?? backgroundScale;
+            if (backScale <= 0f || float.IsNaN(backScale) || float.IsInfinity(backScale))
+            {
+                backScale = 1f;
+            }
+            // Keep parallax math consistent with the background scale.
+            Vector pos = VectDiv(camera.RenderPos, backScale);
+            back.UpdateWithCameraPos(pos);
+            Renderer.PushMatrix();
+            Renderer.Scale(back.scaleX, back.scaleY, 1f);
+            back.Draw();
+            // The tile map repeats P1 in both directions over a design-sized window around the
+            // camera, so every piece anchored to the authored P1 section has to be repeated over
+            // the same sections. Otherwise only the section the camera started on is dressed.
+            (int firstColumn, int lastColumn) = BackgroundTiling.GetSectionRange(
+                back.x,
+                backTexture?._realWidth ?? 0,
+                pos.X,
+                SCREEN_WIDTH);
+            int p2Count = BackgroundTiling.GetP2Count(mapHeight, SCREEN_HEIGHT);
+            if (p2Count > 0)
+            {
+                int pack = Application.SharedRootController().Pack;
+                int p2Y = PackConfig.GetBoxBackgroundP2Y(pack);
+                if (p2Y > 0)
+                {
+                    string[] boxBackgrounds = PackConfig.GetBoxBackgrounds(pack);
+                    string p2ResourceName = boxBackgrounds.Skip(1).FirstOrDefault(name => !string.IsNullOrWhiteSpace(name));
+                    if (!string.IsNullOrWhiteSpace(p2ResourceName))
+                    {
+                        Texture2D p2Texture = Application.GetTexture(p2ResourceName);
+                        Rectangle p2Rect = p2Texture.quadRects != null
+                            ? p2Texture.quadRects[0]
+                            : new Rectangle(0, 0, p2Texture._realWidth, p2Texture._realHeight);
+
+                        // Enable blending for p2 to avoid dark seams where alpha overlaps p1.
+                        Renderer.Enable(Renderer.GL_BLEND);
+                        Renderer.SetBlendFunc(BlendingFactor.GLONE, BlendingFactor.GLONEMINUSSRCALPHA);
+
+                        // P2 is authored for the first seam. Repeat it at the P1 cadence so maps
+                        // with three sections dress both their top and bottom seams.
+                        for (int seamIndex = 0; seamIndex < p2Count; seamIndex++)
+                        {
+                            float adjustedP2Y = BackgroundTiling.ResolveP2Y(
+                                p2Y,
+                                backTexture._realHeight,
+                                seamIndex);
+                            for (int column = firstColumn; column <= lastColumn; column++)
+                            {
+                                DrawHelper.DrawImagePart(
+                                    p2Texture,
+                                    p2Rect,
+                                    back.x + (column * backTexture._realWidth),
+                                    back.y + adjustedP2Y);
+                            }
+                        }
+                        Renderer.Disable(Renderer.GL_BLEND);
+                    }
+                }
+            }
+            Renderer.Enable(Renderer.GL_BLEND);
+            Renderer.SetBlendFunc(BlendingFactor.GLONE, BlendingFactor.GLONEMINUSSRCALPHA);
+            if (gravityState.HasEarthAnimations)
+            {
+                // The earth belongs to the P1 section it was authored on, so it repeats with the
+                // tile map on both axes rather than leaving every other section's sky empty.
+                (int firstRow, int lastRow) = BackgroundTiling.GetSectionRange(
+                    back.y,
+                    backTexture?._realHeight ?? 0,
+                    pos.Y,
+                    SCREEN_HEIGHT);
+                for (int column = firstColumn; column <= lastColumn; column++)
+                {
+                    for (int row = firstRow; row <= lastRow; row++)
+                    {
+                        Renderer.PushMatrix();
+                        Renderer.Translate(
+                            column * (backTexture?._realWidth ?? 0),
+                            row * (backTexture?._realHeight ?? 0),
+                            0f);
+                        gravityState.DrawEarthAnimations();
+                        Renderer.PopMatrix();
+                    }
+                }
+            }
+            Renderer.PopMatrix();
+            Renderer.Enable(Renderer.GL_BLEND);
+            Renderer.SetBlendFunc(BlendingFactor.GLONE, BlendingFactor.GLONEMINUSSRCALPHA);
+            pollenDrawer.Draw();
+            gravityState.DrawButtons();
+            miceManager?.DrawHoles();
+            Renderer.SetColor(Color.White);
+            Renderer.Enable(Renderer.GL_TEXTURE_2D);
+            Renderer.SetBlendFunc(BlendingFactor.GLONE, BlendingFactor.GLONEMINUSSRCALPHA);
+            decalsLayer?.Draw();
+            support.Draw();
+            waterLayer?.DrawBack();
+            TargetObject?.Draw();
+            TargetAnimation?.DrawSleepOverlays();
+            // Draw additional Om Noms. targets[0] is the primary, drawn above.
+            for (int ti = 1; ti < targets.Count; ti++)
+            {
+                TargetContext t = targets[ti];
+                t.support?.Draw();
+                t.targetObject?.Draw();
+                t.animation?.DrawSleepOverlays();
+            }
+            tutorialDirector.DrawTexts();
+            tutorialDirector.DrawImages();
+            if (antsPaths != null)
+            {
+                foreach (AntsPath antsPath in antsPaths)
+                {
+                    antsPath?.Draw();
+                }
+            }
+            foreach (Razor razor in razors)
+            {
+                razor.Draw();
+            }
+            foreach (RotatedCircle rotatedCircle in rotatedCircles)
+            {
+                rotatedCircle.Draw();
+            }
+            conveyors.Draw();
+            foreach (GameObject bubble in bubbles)
+            {
+                bubble.Draw();
+            }
+            foreach (GameObject pump in pumps)
+            {
+                pump.Draw();
+            }
+            foreach (Spikes spike in spikes)
+            {
+                spike.Draw();
+            }
+            foreach (PauseSwitcher switcher in pauseSwitchers)
+            {
+                switcher?.Draw();
+            }
+            foreach (Bouncer bouncer in bouncers)
+            {
+                bouncer.Draw();
+            }
+            foreach (BambooTube bambooTube in bambooTubes)
+            {
+                bambooTube?.Draw();
+            }
+            MechanicalHand activeHand = null;
+            if (hands != null)
+            {
+                foreach (MechanicalHand hand in hands)
+                {
+                    if (hand != null)
+                    {
+                        hand.Draw();
+                        if (hand.State == MechanicalHandState.HoldingCandy)
+                        {
+                            activeHand = hand;
+                        }
+                    }
+                }
+            }
+            activeHand?.TheClaw().DrawActiveHand();
+            miceManager?.DrawMice();
+            foreach (Sock sock in socks)
+            {
+                sock.y -= 85f;
+                sock.Draw();
+                sock.y += 85f;
+            }
+            foreach (SteamTube steamTube in tubes)
+            {
+                steamTube?.DrawBack();
+            }
+
+            foreach (Lantern lantern in Lantern.AllLanterns)
+            {
+                lantern.Draw();
+            }
+
+            Renderer.SetBlendFunc(BlendingFactor.GLONE, BlendingFactor.GLONEMINUSSRCALPHA);
+            if (ghosts != null)
+            {
+                foreach (Ghost ghost in ghosts)
+                {
+                    ghost?.Draw();
+                }
+            }
+
+            Renderer.SetBlendFunc(BlendingFactor.GLSRCALPHA, BlendingFactor.GLONEMINUSSRCALPHA);
+            // Two passes, as in the reference engine: every grab's backing layer (the rail a
+            // moveable grab slides along, the hook back plate) is drawn before any rope. A single
+            // interleaved pass lets a later grab's rail paint over an earlier grab's rope.
+            foreach (Grab grab in bungees)
+            {
+                // Reset blend mode per grab to avoid state leakage from child draws.
+                Renderer.SetBlendFunc(BlendingFactor.GLSRCALPHA, BlendingFactor.GLONEMINUSSRCALPHA);
+                grab.GunSource?.SetDisabled(candies[0].Lifecycle.Attachments.InLantern || MouseCarries(candies[0]));
+                grab.DrawBack();
+            }
+            foreach (Grab grab in bungees)
+            {
+                Renderer.SetBlendFunc(BlendingFactor.GLSRCALPHA, BlendingFactor.GLONEMINUSSRCALPHA);
+                grab.Draw();
+            }
+
+            // candiesConnected elastic: not a Grab, so draw it directly after the grab ropes.
+            Renderer.SetBlendFunc(BlendingFactor.GLSRCALPHA, BlendingFactor.GLONEMINUSSRCALPHA);
+            candyConnector?.Draw();
+            Renderer.SetColor(Color.White);
+
+            foreach (Grab grab in bungees)
+            {
+                GunSource gun = grab.GunSource;
+                if (gun == null || !gun.HasFired)
+                {
+                    continue;
+                }
+
+                Renderer.SetBlendFunc(BlendingFactor.GLONE, BlendingFactor.GLONEMINUSSRCALPHA);
+                gun.Cup?.Draw();
+            }
+
+            Renderer.SetBlendFunc(BlendingFactor.GLONE, BlendingFactor.GLONEMINUSSRCALPHA);
+            foreach (LightBulb bulb in LightEmitterVisuals())
+            {
+                bulb?.DrawLight();
+            }
+            foreach (GameObject starObj in stars)
+            {
+                starObj.Draw();
+            }
+            particlesAniPool.Draw();
+            if (rockets != null)
+            {
+                foreach (Rocket rocket in rockets)
+                {
+                    if (rocket == null)
+                    {
+                        continue;
+                    }
+                    bool hiddenForTransit = false;
+                    for (int ci = 0; ci < candies.Count; ci++)
+                    {
+                        CandyContext ctx = candies[ci];
+                        if (rocket == ctx.Lifecycle.Attachments.Rocket && ctx.Lifecycle.Presence == CandyPresence.Hidden)
+                        {
+                            hiddenForTransit = true;
+                            break;
+                        }
+                    }
+                    if (!hiddenForTransit)
+                    {
+                        rocket.Draw();
+                    }
+                }
+            }
+            // Draw every whole candy body + its blink in one pass. A body only exists while it is
+            // active, so the old removed/mid-transport guards are the enumerator's job now. Light
+            // emitters draw themselves later, and a candy inside a lantern is drawn by the lantern.
+            foreach (CandyBody body in ActiveCandyBodies())
+            {
+                CandyContext ctx = body.Owner;
+                if (body.Role != CandyBodyRole.Whole || ctx.emitsLight || ctx.Lifecycle.Attachments.InLantern)
+                {
+                    continue;
+                }
+
+                // The professor's hand is still carrying this candy; it draws its own copy.
+                if (ProfessorHandHolds && ctx == candies[0])
+                {
+                    continue;
+                }
+                body.Visual.x = body.Point.pos.X;
+                body.Visual.y = body.Point.pos.Y;
+                body.Visual.Draw();
+                if (body.BlinkAnimation?.GetCurrentTimeline() != null)
+                {
+                    Renderer.SetBlendFunc(BlendingFactor.GLSRCALPHA, BlendingFactor.GLONE);
+                    body.BlinkAnimation.Draw();
+                    Renderer.SetBlendFunc(BlendingFactor.GLONE, BlendingFactor.GLONEMINUSSRCALPHA);
+                }
+            }
+            if (hands != null)
+            {
+                foreach (MechanicalHand hand in hands)
+                {
+                    if (hand != null && hand.State == MechanicalHandState.HoldingCandy)
+                    {
+                        hand.TheClaw().DrawFingers();
+                    }
+                }
+            }
+            if (snailobjects != null)
+            {
+                foreach (Snail snail in snailobjects)
+                {
+                    snail?.Draw();
+                }
+            }
+            // Split halves draw on top of the hands and snails, the z-order the split levels ship with.
+            foreach (CandyBody body in ActiveCandyBodies())
+            {
+                if (body.Role != CandyBodyRole.Whole)
+                {
+                    body.Visual.Draw();
+                }
+            }
+            waterLayer?.DrawFront();
+            foreach (LightBulb bulb in LightEmitterVisuals())
+            {
+                bulb?.DrawBottleAndFirefly();
+            }
+            foreach (SteamTube tube in tubes)
+            {
+                tube?.DrawFront();
+            }
+            foreach (Grab grab in bungees)
+            {
+                if (grab.Spider is SpiderRider drawnRider && drawnRider.IsAttached)
+                {
+                    drawnRider.Animation.Draw();
+                }
+            }
+            aniPool.Draw();
+            Renderer.SetColor(Color.White);
+            DrawCuts();
+            Renderer.SetBlendFunc(BlendingFactor.GLONE, BlendingFactor.GLONEMINUSSRCALPHA);
+            camera.CancelCameraTransformation();
+            if (pauseSwitcherWaves?.visible == true)
+            {
+                pauseSwitcherWaves.Draw();
+                Renderer.SetBlendFunc(BlendingFactor.GLONE, BlendingFactor.GLONEMINUSSRCALPHA);
+            }
+            // Screen-space gameplay UI stays readable while the world is frozen.
+            staticAniPool.Draw();
+            PostDraw();
+        }
+
+        /// <summary>
+        /// Renders finger cut trails as triangle strips with Bézier-smoothed paths
+        /// that grow in width from start to end.
+        /// </summary>
+        public void DrawCuts()
+        {
+            foreach (PointerGestureState gesture in pointerGestures)
+            {
+                gesture.Trace?.Draw();
+            }
+        }
+    }
+}

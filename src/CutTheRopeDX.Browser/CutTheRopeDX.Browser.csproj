@@ -1,0 +1,93 @@
+<Project Sdk="Microsoft.NET.Sdk.WebAssembly">
+
+  <PropertyGroup>
+    <RootNamespace>CutTheRopeDX</RootNamespace>
+    <TargetFramework>net10.0-browser</TargetFramework>
+    <OutputType>Exe</OutputType>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <!-- The physics loop is unusable on the interpreter. -->
+    <RunAOTCompilation>true</RunAOTCompilation>
+    <!--
+      AOT is a publish-time step and the most expensive one there is, so CI opts out: a check
+      that the project builds does not need it. Note this does not affect `dotnet build`, which
+      never AOTs — its Emscripten link comes from SkiaSharp's native assets instead.
+    -->
+    <RunAOTCompilation Condition="'$(CI)' == 'true'">false</RunAOTCompilation>
+    <WasmNativeStrip>true</WasmNativeStrip>
+    <!--
+      Two runtimes are published from this one project and wwwroot, and this is what tells
+      them apart. Set it to publish the fallback; scripts/publish_browser.py builds both and
+      lays the fallback's framework tree down beside the threaded one.
+
+      Threaded is the better build where it can run: the managed owner thread is a worker, so
+      it owns the WebGL context outright - SkiaSharp's WebAssembly archive binds the raw
+      emscripten_gl* layer, which always runs on the calling thread and consults no proxy -
+      and the canvas reaches it as a transferred OffscreenCanvas. What it cannot do is run
+      without cross-origin isolation, which a Discord activity and an Android WebView do not
+      have and cannot be given: the service worker that supplies it elsewhere needs headers
+      of its own. The fallback runs the same game on the browser thread against the page's
+      own canvas and asks the server for nothing.
+    -->
+    <WasmEnableThreads>true</WasmEnableThreads>
+    <WasmEnableThreads Condition="'$(CtrdxSingleThreaded)' == 'true'">false</WasmEnableThreads>
+    <DefineConstants Condition="'$(WasmEnableThreads)' == 'true'">$(DefineConstants);WASM_THREADS</DefineConstants>
+    <!-- The game ships its own locale JSON; ICU would add ~1MB for nothing. -->
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <!--
+      Setting this makes the static web assets SDK generate service-worker-assets.js — every
+      published asset with its integrity hash — and stamp a version derived from those hashes
+      into the service worker. The version changes only when an asset does, which is what
+      drives the cache purge.
+    -->
+    <ServiceWorkerAssetsManifest>service-worker-assets.js</ServiceWorkerAssetsManifest>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="SkiaSharp" />
+    <PackageReference Include="SkiaSharp.NativeAssets.WebAssembly" />
+    <EmccExportedRuntimeMethod Include="GL" />
+    <!-- glcontext.js reaches the owner thread's worker through this. Nothing does in the
+         fallback, where there is no worker and the export does not exist. -->
+    <EmccExportedRuntimeMethod Include="PThread" Condition="'$(WasmEnableThreads)' == 'true'" />
+    <NativeFileReference Include="Native/ctrdxhost.cpp" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../CutTheRopeDX.Core/CutTheRopeDX.Core.csproj" />
+    <ProjectReference Include="../CutTheRopeDX.Rendering.Skia/CutTheRopeDX.Rendering.Skia.csproj" />
+  </ItemGroup>
+
+  <!--
+    The converted content payload is ~30MB of already-compressed webp/ogg. Letting the
+    WASM SDK fingerprint and Brotli-compress it would add minutes to publish and gain
+    nothing, so it ships as plain static files.
+
+    CtrdxSkipContent drops it entirely. scripts/publish_browser.py publishes this project
+    twice and keeps only one framework tree from the second run, so copying 30MB it is
+    about to delete is 30MB of nothing.
+  -->
+  <PropertyGroup>
+    <CtrdxContentCopy>PreserveNewest</CtrdxContentCopy>
+    <CtrdxContentCopy Condition="'$(CtrdxSkipContent)' == 'true'">Never</CtrdxContentCopy>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Content Update="wwwroot/content/**" CopyToPublishDirectory="$(CtrdxContentCopy)" />
+  </ItemGroup>
+
+  <!--
+    wwwroot/favicon.ico and wwwroot/icon-512.png are copies of distribution/icons/
+    CutTheRopeDXIcon.ico and CutTheRopeDXIcon_512.png. They are copied rather than linked in
+    from there: linking gives the asset a content root of wwwroot while its identity stays in
+    distribution, and the dev server reads content from the content root, so `dotnet run`
+    answers both with an empty 200 and the page shows a broken image. Publish copies by
+    identity and is unaffected, which is what made this look like a publish-only concern.
+    Refresh them from distribution/icons if the app icon ever changes.
+  -->
+
+  <!-- Development serves coi-sw directly; publish swaps in the cache-aware variant. -->
+  <ItemGroup>
+    <ServiceWorker Include="wwwroot/coi-sw.js" PublishedContent="wwwroot/service-worker.published.js" />
+  </ItemGroup>
+
+</Project>

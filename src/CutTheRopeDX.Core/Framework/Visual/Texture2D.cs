@@ -1,0 +1,527 @@
+using System;
+using System.Collections.Generic;
+
+using CutTheRopeDX.Commons;
+using CutTheRopeDX.Framework.Core;
+using CutTheRopeDX.Framework.Platform;
+
+namespace CutTheRopeDX.Framework.Visual
+{
+    /// <summary>
+    /// Manages a 2D texture with optional quad-based sprite regions, scaling, and a global linked list for bulk suspend/resume.
+    /// </summary>
+    internal sealed class Texture2D : FrameworkTypes
+    {
+        /// <summary>
+        /// Draws a rectangular region of <paramref name="texture"/> at <paramref name="point"/>.
+        /// </summary>
+        /// <param name="texture">Texture to draw from.</param>
+        /// <param name="rect">Source rectangle within the texture.</param>
+        /// <param name="point">Screen position to draw at.</param>
+        public static void DrawRectAtPoint(Texture2D texture, Rectangle rect, Vector point)
+        {
+            float texLeft = texture._invWidth * rect.x;
+            float texTop = texture._invHeight * rect.y;
+            float texRight = texLeft + (texture._invWidth * rect.w);
+            float texBottom = texTop + (texture._invHeight * rect.h);
+            Renderer.Enable(Renderer.GL_TEXTURE_2D);
+            Renderer.BindTexture(texture);
+            VertexPositionNormalTexture[] vertices = QuadVertexCache.GetTexturedQuad(
+                point.X, point.Y, rect.w, rect.h,
+                texLeft, texTop, texRight, texBottom);
+            Renderer.DrawTriangleStrip(vertices);
+        }
+
+        /// <summary>
+        /// Returns <see langword="true"/> if this texture uses WVGA scaling.
+        /// </summary>
+        /// <returns><see langword="true"/> when WVGA scaling is enabled; otherwise <see langword="false"/>.</returns>
+        public bool IsWvga()
+        {
+            return _isWvga;
+        }
+
+        /// <summary>
+        /// Allocates quad arrays with the given <paramref name="capacity"/>.
+        /// </summary>
+        /// <param name="capacity">Number of quads to allocate.</param>
+        public void SetQuadsCapacity(int capacity)
+        {
+            quadsCount = capacity;
+            quads = new Quad2D[quadsCount];
+            quadRects = new Rectangle[quadsCount];
+            quadOffsets = new Vector[quadsCount];
+        }
+
+        /// <summary>
+        /// Sets the texture coordinates and rectangle for the quad at <paramref name="quadIndex"/>.
+        /// </summary>
+        /// <param name="rect">Source rectangle within the texture.</param>
+        /// <param name="quadIndex">Index of the quad to set.</param>
+        public void SetQuadAt(Rectangle rect, int quadIndex)
+        {
+            quads[quadIndex] = DrawHelper.GetTextureCoordinates(this, rect);
+            quadRects[quadIndex] = rect;
+            quadOffsets[quadIndex] = vectZero;
+        }
+
+        /// <summary>
+        /// Marks this texture as using WVGA scaling.
+        /// </summary>
+        public void SetWvga()
+        {
+            _isWvga = true;
+        }
+
+        /// <summary>
+        /// Sets the texture scale factors and recalculates drawing dimensions.
+        /// </summary>
+        /// <param name="scaleX">Horizontal scale factor.</param>
+        /// <param name="scaleY">Vertical scale factor.</param>
+        public void SetScale(float scaleX, float scaleY)
+        {
+            _scaleX = scaleX;
+            _scaleY = scaleY;
+            CalculateForQuickDrawing();
+        }
+
+        /// <summary>
+        /// Draws the quad at <paramref name="quadIndex"/> of <paramref name="texture"/> at <paramref name="point"/>.
+        /// </summary>
+        /// <param name="texture">Texture containing the quad.</param>
+        /// <param name="quadIndex">Index of the quad to draw.</param>
+        /// <param name="point">Screen position to draw at.</param>
+        public static void DrawQuadAtPoint(Texture2D texture, int quadIndex, Vector point)
+        {
+            Quad2D quad2D = texture.quads[quadIndex];
+            float w = texture.quadRects[quadIndex].w;
+            float h = texture.quadRects[quadIndex].h;
+            Renderer.Enable(Renderer.GL_TEXTURE_2D);
+            Renderer.BindTexture(texture);
+            VertexPositionNormalTexture[] vertices = QuadVertexCache.GetTexturedQuad(
+                point.X, point.Y, w, h,
+                quad2D.tlX, quad2D.tlY, quad2D.brX, quad2D.brY);
+            Renderer.DrawTriangleStrip(vertices);
+        }
+
+        /// <summary>
+        /// Draws the full <paramref name="texture"/> at <paramref name="point"/>.
+        /// </summary>
+        /// <param name="texture">Texture to draw.</param>
+        /// <param name="point">Screen position to draw at.</param>
+        public static void DrawAtPoint(Texture2D texture, Vector point)
+        {
+            Renderer.Enable(Renderer.GL_TEXTURE_2D);
+            Renderer.BindTexture(texture);
+            VertexPositionNormalTexture[] vertices = QuadVertexCache.GetTexturedQuad(
+                point.X, point.Y, texture._realWidth, texture._realHeight,
+                0f, 0f, texture._maxS, texture._maxT);
+            Renderer.DrawTriangleStrip(vertices);
+        }
+
+        /// <summary>
+        /// Recalculates <see cref="_realWidth"/>, <see cref="_realHeight"/>, <see cref="_invWidth"/>, and <see cref="_invHeight"/> based on current scale and WVGA mode.
+        /// </summary>
+        public void CalculateForQuickDrawing()
+        {
+            if (_isWvga)
+            {
+                _realWidth = (int)(_width * _maxS / _scaleX);
+                _realHeight = (int)(_height * _maxT / _scaleY);
+                _invWidth = 1f / (_width / _scaleX);
+                _invHeight = 1f / (_height / _scaleY);
+                return;
+            }
+            _realWidth = (int)(_width * _maxS);
+            _realHeight = (int)(_height * _maxT);
+            _invWidth = 1f / _width;
+            _invHeight = 1f / _height;
+        }
+
+        /// <summary>
+        /// Placeholder for setting anti-alias texture parameters.
+        /// </summary>
+        public static void SetAntiAliasTexParameters()
+        {
+        }
+
+        /// <summary>
+        /// Placeholder for setting alias texture parameters.
+        /// </summary>
+        public static void SetAliasTexParameters()
+        {
+        }
+
+        /// <summary>
+        /// Registers this texture in the global linked list.
+        /// </summary>
+        public void Reg()
+        {
+            prev = tail;
+            if (prev != null)
+            {
+                prev.next = this;
+            }
+            else
+            {
+                root = this;
+            }
+            tail = this;
+        }
+
+        /// <summary>
+        /// Unregisters this texture from the global linked list.
+        /// </summary>
+        public void Unreg()
+        {
+            if (prev != null)
+            {
+                prev.next = next;
+            }
+            else
+            {
+                root = next;
+            }
+            if (next != null)
+            {
+                next.prev = prev;
+            }
+            else
+            {
+                tail = prev;
+            }
+            next = prev = null;
+        }
+
+        /// <summary>
+        /// Loads the texture from the given resource <paramref name="path"/> and registers it.
+        /// </summary>
+        /// <param name="path">Resource path to load from.</param>
+        /// <returns>The initialized texture instance, or <see langword="null"/> if loading fails.</returns>
+        public Texture2D InitWithPath(string path)
+        {
+            _resName = path;
+            // _localTexParams = _texParams;
+            Reg();
+            (int W, int H)? dimensions = AssetPlatform.Current.ImageDimensions(path);
+            if (dimensions == null)
+            {
+                return null;
+            }
+            textureHandle_ = AssetPlatform.Current.ImageTexture(path);
+            ImageLoaded(dimensions.Value.W, dimensions.Value.H);
+            quadsCount = 0;
+            CalculateForQuickDrawing();
+            Resume();
+            return this;
+        }
+
+        /// <summary>
+        /// Stores the loaded image dimensions and computes max S/T texture coordinates.
+        /// </summary>
+        /// <param name="w">Image width in pixels.</param>
+        /// <param name="h">Image height in pixels.</param>
+        private void ImageLoaded(int w, int h)
+        {
+            _lowypoint = h;
+            int realWidth = w;
+            int realHeight = h;
+            //_size = new Vector(realWidth, realHeight);
+            _width = (uint)realWidth;
+            _height = (uint)realHeight;
+            //_format = _defaultAlphaPixelFormat;
+            _maxS = w / realWidth;
+            _maxT = h / realHeight;
+        }
+
+        /// <summary>
+        /// Placeholder for resuming a suspended texture.
+        /// </summary>
+        private static void Resume()
+        {
+        }
+
+        /// <summary>
+        /// Placeholder for optimizing texture memory.
+        /// </summary>
+        public static void OptimizeMemory()
+        {
+        }
+
+        /// <summary>
+        /// Placeholder for suspending a texture to free memory.
+        /// </summary>
+        public static void Suspend()
+        {
+        }
+
+        /// <summary>
+        /// Every texture in the global list, oldest first.
+        /// </summary>
+        /// <remarks>
+        /// Recovery needs the list itself, not the bulk operations over it: it treats a texture
+        /// loaded from a file and a capture of a frame quite differently, and only the individual
+        /// entries say which is which.
+        /// </remarks>
+        /// <returns>The registered textures.</returns>
+        public static IEnumerable<Texture2D> Registered()
+        {
+            for (Texture2D texture = root; texture != null; texture = texture.next)
+            {
+                yield return texture;
+            }
+        }
+
+        /// <summary>
+        /// Suspends all registered textures in the global linked list.
+        /// </summary>
+        public static void SuspendAll()
+        {
+            for (Texture2D texture2D = root; texture2D != null; texture2D = texture2D.next)
+            {
+                Suspend();
+            }
+        }
+
+        /// <summary>
+        /// Resumes all registered textures in the global linked list.
+        /// </summary>
+        public static void ResumeAll()
+        {
+            for (Texture2D texture2D = root; texture2D != null; texture2D = texture2D.next)
+            {
+                Resume();
+            }
+        }
+
+        /// <summary>
+        /// Initializes this texture from the current render target with dimensions <paramref name="w"/> x <paramref name="h"/>.
+        /// </summary>
+        /// <param name="w">Width of the render target in pixels.</param>
+        /// <param name="h">Height of the render target in pixels.</param>
+        /// <returns>The initialized texture instance.</returns>
+        public Texture2D InitFromPixels(int w, int h)
+        {
+            _lowypoint = -1;
+            // _localTexParams = _defaultTexParams;
+            Reg();
+            int realWidth = w;
+            int realHeight = h;
+            float transitionTime = Application.SharedRootController().transitionTime;
+            Application.SharedRootController().transitionTime = -1f;
+            // Always use the render target since we now use fullscreen-style scaling in all modes
+            GameLifecycle.OnDrawFrame();
+            ITextureHandle renderTargetHandle = Renderer.DetachRenderTarget();
+            Renderer.ResetRenderTarget();
+            Application.SharedRootController().transitionTime = transitionTime;
+            textureHandle_ = renderTargetHandle;
+            //_size = new Vector(realWidth, realHeight);
+            _width = (uint)realWidth;
+            _height = (uint)realHeight;
+            _maxS = w / realWidth;
+            _maxT = h / realHeight;
+            quadsCount = 0;
+            CalculateForQuickDrawing();
+            Resume();
+            return this;
+        }
+
+        /// <summary>
+        /// Initializes this texture from a handle built elsewhere, such as a recolored copy of
+        /// another texture's region, rather than from a content path.
+        /// </summary>
+        /// <param name="handle">Platform texture to wrap, or <see langword="null"/> without a device.</param>
+        /// <param name="w">Width of the handle in pixels.</param>
+        /// <param name="h">Height of the handle in pixels.</param>
+        /// <returns>The initialized texture instance.</returns>
+        /// <remarks>
+        /// The size is passed in rather than read back off the handle because a headless run has no
+        /// handle to read, and owning the handle rather than a content path is what makes
+        /// <see cref="Dispose(bool)"/> release it directly.
+        /// </remarks>
+        public Texture2D InitWithHandle(ITextureHandle handle, int w, int h)
+        {
+            Reg();
+            textureHandle_ = handle;
+            ImageLoaded(w, h);
+            quadsCount = 0;
+            CalculateForQuickDrawing();
+            Resume();
+            return this;
+        }
+
+        /// <inheritdoc />
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing)
+            {
+                if (textureHandle_ != null)
+                {
+                    // A texture built from a handle owns it outright; one loaded from content is
+                    // owned by the platform's image cache, which frees it by name.
+                    if (_resName == null)
+                    {
+                        textureHandle_.Dispose();
+                    }
+                    else
+                    {
+                        AssetPlatform.Current.FreeImage(_resName);
+                    }
+
+                    textureHandle_ = null;
+                }
+            }
+            base.Dispose(disposing);
+        }
+
+        /// <summary>
+        /// The underlying platform texture handle.
+        /// </summary>
+        public ITextureHandle textureHandle_;
+
+        /// <summary>
+        /// Resource name/path used to load this texture.
+        /// </summary>
+        public string _resName;
+
+        /// <summary>
+        /// Builds this texture's handle again after a device loss, or <see langword="null"/> when
+        /// nothing can.
+        /// </summary>
+        /// <remarks>
+        /// Only a texture with no content path has any use for this: one loaded from a file is
+        /// loaded again from the path it remembers. What is left over are the textures built from
+        /// pixels rather than read from disk, and they are not all alike. A captured frame is
+        /// gone with the device that took it. A recolored atlas frame is not: its owner is still
+        /// holding the recipe and the atlas it came from is itself reloaded. Carrying the rebuild
+        /// on the texture is what lets recovery tell those two apart, because nothing else about
+        /// them differs.
+        /// </remarks>
+        public Func<ITextureHandle> Regenerate;
+
+        /// <summary>
+        /// Precomputed texture coordinate quads for each sprite region.
+        /// </summary>
+        public Quad2D[] quads;
+
+        /// <summary>
+        /// Raw texture width in pixels.
+        /// </summary>
+        private uint _width;
+
+        /// <summary>
+        /// Raw texture height in pixels.
+        /// </summary>
+        private uint _height;
+
+        /// <summary>
+        /// Lowest Y point of the loaded image, or -1 for render-target textures.
+        /// </summary>
+        public int _lowypoint;
+
+        /// <summary>
+        /// Maximum S (horizontal) texture coordinate.
+        /// </summary>
+        public float _maxS;
+
+        /// <summary>
+        /// Maximum T (vertical) texture coordinate.
+        /// </summary>
+        public float _maxT;
+
+        /// <summary>
+        /// Horizontal scale factor for WVGA mode.
+        /// </summary>
+        private float _scaleX;
+
+        /// <summary>
+        /// Vertical scale factor for WVGA mode.
+        /// </summary>
+        private float _scaleY;
+
+        // private Vector _size;
+
+        /// <summary>
+        /// Per-quad position offsets relative to the texture origin.
+        /// </summary>
+        public Vector[] quadOffsets;
+
+        /// <summary>
+        /// Per-quad source rectangles within the texture.
+        /// </summary>
+        public Rectangle[] quadRects;
+
+        /// <summary>
+        /// Number of quads defined for this texture.
+        /// </summary>
+        public int quadsCount;
+
+        /// <summary>
+        /// Computed drawable width in pixels, accounting for scale and WVGA.
+        /// </summary>
+        public int _realWidth;
+
+        /// <summary>
+        /// Computed drawable height in pixels, accounting for scale and WVGA.
+        /// </summary>
+        public int _realHeight;
+
+        /// <summary>
+        /// Reciprocal of the texture width, used for UV coordinate calculation.
+        /// </summary>
+        public float _invWidth;
+
+        /// <summary>
+        /// Reciprocal of the texture height, used for UV coordinate calculation.
+        /// </summary>
+        public float _invHeight;
+
+        /// <summary>
+        /// Original size before transparency was trimmed, or <c>vectUndefined</c> if not trimmed.
+        /// </summary>
+        public Vector preCutSize;
+
+        /// <summary>
+        /// Per-quad original sizes before transparency was trimmed.
+        /// </summary>
+        public Vector[] preCutSizes;
+
+        /// <summary>
+        /// Whether this texture uses WVGA scaling.
+        /// </summary>
+        private bool _isWvga;
+
+        // private TexParams _localTexParams;
+
+        // private static readonly TexParams _defaultTexParams;
+
+        // private static readonly TexParams _texParams;
+
+        /// <summary>
+        /// Head of the global texture linked list.
+        /// </summary>
+        private static Texture2D root;
+
+        /// <summary>
+        /// Tail of the global texture linked list.
+        /// </summary>
+        private static Texture2D tail;
+
+        /// <summary>
+        /// Next texture in the global linked list.
+        /// </summary>
+        private Texture2D next;
+
+        /// <summary>
+        /// Previous texture in the global linked list.
+        /// </summary>
+        private Texture2D prev;
+
+        /// <summary>
+        /// Placeholder struct for texture parameter storage.
+        /// </summary>
+        private readonly struct TexParams
+        {
+        }
+    }
+}

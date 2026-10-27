@@ -1,0 +1,725 @@
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Reflection;
+
+using CutTheRopeDX.Framework.Core;
+using CutTheRopeDX.Framework.Helpers;
+using CutTheRopeDX.Framework.Physics;
+using CutTheRopeDX.Framework.Visual;
+using CutTheRopeDX.GameMain;
+using CutTheRopeDX.GameMain.Tutorials;
+
+using Xunit;
+
+namespace CutTheRopeDX.Tests.Interactions
+{
+    /// <summary>
+    /// Reads the scene's own state so a matrix cell can be asserted against what the game actually
+    /// holds, not against a predicate's return value. The scene keeps its collections private, so
+    /// this reaches them by reflection; a renamed field fails loudly here instead of silently
+    /// weakening every test.
+    /// </summary>
+    internal static class SceneProbe
+    {
+        private const BindingFlags Instance = BindingFlags.Instance | BindingFlags.NonPublic;
+
+        /// <summary>All candy contexts, primary first.</summary>
+        /// <param name="scene">Scene to read.</param>
+        /// <returns>The candy list.</returns>
+        public static List<CandyContext> Candies(this GameScene scene)
+        {
+            return Field<List<CandyContext>>(scene, "candies");
+        }
+
+        /// <summary>The primary candy (candies[0]).</summary>
+        /// <param name="scene">Scene to read.</param>
+        /// <returns>The primary candy context.</returns>
+        public static CandyContext Candy(this GameScene scene)
+        {
+            return scene.Candies()[0];
+        }
+
+        /// <summary>All grabs (rope hooks, wheels, guns, bees, suction cups).</summary>
+        /// <param name="scene">Scene to read.</param>
+        /// <returns>The grab list.</returns>
+        public static List<Grab> Grabs(this GameScene scene)
+        {
+            return Field<List<Grab>>(scene, "bungees");
+        }
+
+        /// <summary>All ropes currently registered with the scene.</summary>
+        /// <param name="scene">Scene to read.</param>
+        /// <returns>The registered rope entries.</returns>
+        public static IReadOnlyList<RopeEntry> RegisteredRopes(this GameScene scene)
+        {
+            return Field<RopeRegistry>(scene, "ropes").All;
+        }
+
+        /// <summary>The elastic joining the two candies, or <see langword="null"/> when unconnected.</summary>
+        /// <param name="scene">Scene to read.</param>
+        /// <returns>The candy connector.</returns>
+        public static Bungee Connector(this GameScene scene)
+        {
+            return Field<Bungee>(scene, "candyConnector");
+        }
+
+        /// <summary>All free bubbles loaded into the scene.</summary>
+        /// <param name="scene">Scene to read.</param>
+        /// <returns>The bubble list.</returns>
+        public static List<Bubble> Bubbles(this GameScene scene)
+        {
+            return Field<List<Bubble>>(scene, "bubbles");
+        }
+
+        /// <summary>All uncollected stars loaded into the scene.</summary>
+        /// <param name="scene">Scene to read.</param>
+        /// <returns>The star list.</returns>
+        public static List<Star> Stars(this GameScene scene)
+        {
+            return Field<List<Star>>(scene, "stars");
+        }
+
+        /// <summary>All time-freeze buttons loaded into the scene.</summary>
+        /// <param name="scene">Scene to read.</param>
+        /// <returns>The switcher list.</returns>
+        public static List<PauseSwitcher> PauseSwitchers(this GameScene scene)
+        {
+            return Field<List<PauseSwitcher>>(scene, "pauseSwitchers");
+        }
+
+        /// <summary>The screen-covering time-freeze wave overlay.</summary>
+        /// <param name="scene">Scene to read.</param>
+        /// <returns>The wave overlay.</returns>
+        public static PauseSwitcherWaves WavesOverlay(this GameScene scene)
+        {
+            return Field<PauseSwitcherWaves>(scene, "pauseSwitcherWaves");
+        }
+
+        /// <summary>Whether the scene currently has time stopped.</summary>
+        /// <param name="scene">Scene to read.</param>
+        /// <returns><see langword="true"/> when time is frozen.</returns>
+        public static bool IsTimeFrozen(this GameScene scene)
+        {
+            return Field<bool>(scene, "timeFrozen");
+        }
+
+        /// <summary>Whether the easter egg is on screen.</summary>
+        /// <param name="scene">Scene to read.</param>
+        /// <returns><see langword="true"/> while the egg is drawing.</returns>
+        public static bool IsEasterEggPlaying(this GameScene scene)
+        {
+            return Field<EasterEggOmNom>(scene, "easterEgg").IsActive;
+        }
+
+        /// <summary>Sets the chance that a tap on Om Nom plays the easter egg.</summary>
+        /// <param name="scene">Scene to change.</param>
+        /// <param name="chance">0 never plays it, 1 always does.</param>
+        public static void SetEasterEggChance(this GameScene scene, float chance)
+        {
+            Field<EasterEggOmNom>(scene, "easterEgg").TriggerChance = chance;
+        }
+
+        /// <summary>A screen point an Om Nom's own hit test agrees is on him.</summary>
+        /// <param name="scene">Scene to read.</param>
+        /// <param name="index">Which Om Nom, in load order; 0 is the primary one.</param>
+        /// <returns>The point in the input API's screen coordinates.</returns>
+        public static Vector OmNomTapPoint(this GameScene scene, int index = 0)
+        {
+            GameObject target = scene.Targets()[index].targetObject;
+
+            // Walk outward from the anchor until the object's own test accepts a point. The
+            // anchor is not guaranteed to sit inside the drawn quad.
+            for (int radius = 0; radius <= 200; radius += 4)
+            {
+                for (int dx = -radius; dx <= radius; dx += 4)
+                {
+                    for (int dy = -radius; dy <= radius; dy += 4)
+                    {
+                        if (target.PointInDrawQuad(target.x + dx, target.y + dy))
+                        {
+                            return scene.ScreenPositionOf(new Vector(target.x + dx, target.y + dy));
+                        }
+                    }
+                }
+            }
+
+            Assert.Fail("no point on Om Nom's draw quad was found");
+            return default;
+        }
+
+        /// <summary>Presses and releases on Om Nom, which starts the easter egg.</summary>
+        /// <param name="scene">Scene to tap.</param>
+        public static void TapOmNom(this GameScene scene)
+        {
+            Vector point = scene.OmNomTapPoint();
+            _ = scene.TouchDownXYIndex(point.X, point.Y, 0);
+            _ = scene.TouchUpXYIndex(point.X, point.Y, 0);
+        }
+
+        /// <summary>The primary Om Nom.</summary>
+        /// <param name="scene">Scene to read.</param>
+        /// <returns>The scene's first target object.</returns>
+        public static GameObject OmNomTarget(this GameScene scene)
+        {
+            return scene.Targets()[0].targetObject;
+        }
+
+        /// <summary>Whether the opening camera pan is still in flight.</summary>
+        /// <param name="scene">Scene to read.</param>
+        /// <returns><see langword="true"/> while the pan is still travelling.</returns>
+        public static bool IsIntroPanRunning(this GameScene scene)
+        {
+            PropertyInfo property = typeof(GameScene).GetProperty("IntroPanIsRunning", Instance)
+                ?? throw new MissingMemberException(nameof(GameScene), "IntroPanIsRunning");
+            return (bool)property.GetValue(scene);
+        }
+
+        /// <summary>The gameplay particle animation pool.</summary>
+        /// <param name="scene">Scene to read.</param>
+        /// <returns>The scene-owned particle pool.</returns>
+        public static AnimationsPool ParticleAnimations(this GameScene scene)
+        {
+            return Field<AnimationsPool>(scene, "particlesAniPool");
+        }
+
+        /// <summary>The screen-space animation pool containing the level label.</summary>
+        /// <param name="scene">Scene to read.</param>
+        /// <returns>The scene's static animation pool.</returns>
+        public static AnimationsPool StaticAnimations(this GameScene scene)
+        {
+            return Field<AnimationsPool>(scene, "staticAniPool");
+        }
+
+        /// <summary>Converts an object's world position to the input API's screen coordinates.</summary>
+        /// <param name="scene">Scene whose camera performs the conversion.</param>
+        /// <param name="gameObject">Object whose position is converted.</param>
+        /// <returns>The object's position in screen space.</returns>
+        public static Vector ScreenPositionOf(this GameScene scene, GameObject gameObject)
+        {
+            return scene.ScreenPositionOf(new Vector(gameObject.x, gameObject.y));
+        }
+
+        /// <summary>Converts a world position to the input API's screen coordinates.</summary>
+        /// <param name="scene">Scene whose camera performs the conversion.</param>
+        /// <param name="world">Position in world space.</param>
+        /// <returns>The position in screen space.</returns>
+        public static Vector ScreenPositionOf(this GameScene scene, Vector world)
+        {
+            Camera2D camera = Field<Camera2D>(scene, "camera");
+            return new Vector(
+                (world.X - camera.RenderPos.X) * camera.Scale,
+                (world.Y - camera.RenderPos.Y) * camera.Scale);
+        }
+
+        /// <summary>All ghosts.</summary>
+        /// <param name="scene">Scene to read.</param>
+        /// <returns>The ghost list.</returns>
+        public static List<Ghost> Ghosts(this GameScene scene)
+        {
+            return Field<List<Ghost>>(scene, "ghosts");
+        }
+
+        /// <summary>All bouncers.</summary>
+        /// <param name="scene">Scene to read.</param>
+        /// <returns>The bouncer list.</returns>
+        public static List<Bouncer> Bouncers(this GameScene scene)
+        {
+            return Field<List<Bouncer>>(scene, "bouncers");
+        }
+
+        /// <summary>All air pumps.</summary>
+        /// <param name="scene">Scene to read.</param>
+        /// <returns>The pump list.</returns>
+        public static List<Pump> Pumps(this GameScene scene)
+        {
+            return Field<List<Pump>>(scene, "pumps");
+        }
+
+        /// <summary>All rockets.</summary>
+        /// <param name="scene">Scene to read.</param>
+        /// <returns>The rocket list.</returns>
+        public static List<Rocket> Rockets(this GameScene scene)
+        {
+            return Field<List<Rocket>>(scene, "rockets");
+        }
+
+        /// <summary>All mechanical hands.</summary>
+        /// <param name="scene">Scene to read.</param>
+        /// <returns>The hand list.</returns>
+        public static List<MechanicalHand> Hands(this GameScene scene)
+        {
+            return Field<List<MechanicalHand>>(scene, "hands");
+        }
+
+        /// <summary>All snails.</summary>
+        /// <param name="scene">Scene to read.</param>
+        /// <returns>The snail list.</returns>
+        public static List<Snail> Snails(this GameScene scene)
+        {
+            return Field<List<Snail>>(scene, "snailobjects");
+        }
+
+        /// <summary>All magic hats.</summary>
+        /// <param name="scene">Scene to read.</param>
+        /// <returns>The hat list.</returns>
+        public static List<Sock> Hats(this GameScene scene)
+        {
+            return Field<List<Sock>>(scene, "socks");
+        }
+
+        /// <summary>All steam tubes loaded into the scene.</summary>
+        /// <param name="scene">Scene to read.</param>
+        /// <returns>The steam tube list.</returns>
+        public static List<SteamTube> SteamTubes(this GameScene scene)
+        {
+            return Field<List<SteamTube>>(scene, "tubes");
+        }
+
+        /// <summary>All DJ discs.</summary>
+        /// <param name="scene">Scene to read.</param>
+        /// <returns>The disc list.</returns>
+        public static List<RotatedCircle> Discs(this GameScene scene)
+        {
+            return Field<List<RotatedCircle>>(scene, "rotatedCircles");
+        }
+
+        /// <summary>All Om Noms.</summary>
+        /// <param name="scene">Scene to read.</param>
+        /// <returns>The target list.</returns>
+        public static List<TargetContext> Targets(this GameScene scene)
+        {
+            return Field<List<TargetContext>>(scene, "targets");
+        }
+
+        /// <summary>All bomb contexts, in load order.</summary>
+        /// <param name="scene">Scene to read.</param>
+        /// <returns>The contexts that own a bomb body.</returns>
+        public static List<CandyContext> Bombs(this GameScene scene)
+        {
+            return [.. scene.Candies().FindAll(candy => candy.bomb != null)];
+        }
+
+        /// <summary>All spike strips.</summary>
+        /// <param name="scene">Scene to read.</param>
+        /// <returns>The spike list.</returns>
+        public static List<Spikes> SpikeStrips(this GameScene scene)
+        {
+            return Field<List<Spikes>>(scene, "spikes");
+        }
+
+        /// <summary>All mice.</summary>
+        /// <param name="scene">Scene to read.</param>
+        /// <returns>The mouse list.</returns>
+        public static List<Mouse> Mice(this GameScene scene)
+        {
+            return Field<List<Mouse>>(scene, "mice");
+        }
+
+        /// <summary>All bamboo tubes.</summary>
+        /// <param name="scene">Scene to read.</param>
+        /// <returns>The tube list.</returns>
+        public static List<BambooTube> BambooTubes(this GameScene scene)
+        {
+            return Field<List<BambooTube>>(scene, "bambooTubes");
+        }
+
+        /// <summary>The conveyor-belt system.</summary>
+        /// <param name="scene">Scene to read.</param>
+        /// <returns>The conveyor object.</returns>
+        public static ConveyorBeltObject Conveyors(this GameScene scene)
+        {
+            return Field<ConveyorBeltObject>(scene, "conveyors");
+        }
+
+        /// <summary>The win/loss recorder a scenario scene is built with.</summary>
+        /// <param name="scene">Scene to read.</param>
+        /// <returns>The recording delegate.</returns>
+        public static RecordingSceneDelegate Outcomes(this GameScene scene)
+        {
+            return (RecordingSceneDelegate)scene.gameSceneDelegate;
+        }
+
+        /// <summary>The scene's sole tutorial state owner.</summary>
+        /// <param name="scene">Scene to read.</param>
+        /// <returns>The tutorial director.</returns>
+        public static TutorialDirector TutorialDirector(this GameScene scene)
+        {
+            return Field<TutorialDirector>(scene, "tutorialDirector");
+        }
+
+        /// <summary>All prompts registered with the scene's tutorial director in XML order.</summary>
+        /// <param name="scene">Scene to read.</param>
+        /// <returns>The registered prompt list.</returns>
+        public static IReadOnlyList<TutorialPrompt> TutorialPrompts(this GameScene scene)
+        {
+            TutorialDirector director = scene.TutorialDirector();
+            FieldInfo field = typeof(TutorialDirector).GetField("prompts", Instance)
+                ?? throw new MissingFieldException(nameof(TutorialDirector), "prompts");
+            return (IReadOnlyList<TutorialPrompt>)field.GetValue(director);
+        }
+
+        /// <summary>The single prompt armed on one trigger event.</summary>
+        /// <param name="scene">Scene to read.</param>
+        /// <param name="tutorialEvent">Event the prompt listens on.</param>
+        /// <returns>The matching prompt.</returns>
+        public static TutorialPrompt TutorialPromptFor(this GameScene scene, TutorialEvent tutorialEvent)
+        {
+            return scene.TutorialPrompts().Single(prompt => prompt.Trigger.Event == tutorialEvent);
+        }
+
+        /// <summary>Every prompt registered on one trigger event, in XML order.</summary>
+        /// <param name="scene">Scene to read.</param>
+        /// <param name="tutorialEvent">Event the prompts listen on.</param>
+        /// <returns>The matching prompts.</returns>
+        public static List<TutorialPrompt> TutorialPromptsFor(this GameScene scene, TutorialEvent tutorialEvent)
+        {
+            return [.. scene.TutorialPrompts().Where(prompt => prompt.Trigger.Event == tutorialEvent)];
+        }
+
+        /// <summary>
+        /// A prompt's current visual opacity. Read straight off the visual, because the alpha a
+        /// tutorial fades through is timeline state that <c>Draw()</c> only consumes.
+        /// </summary>
+        /// <param name="prompt">Prompt to read.</param>
+        /// <returns>The visual's alpha.</returns>
+        public static float Alpha(this TutorialPrompt prompt)
+        {
+            return prompt.Visual.color.AlphaChannel;
+        }
+
+        /// <summary>The keyframe times on a prompt visual's colour track.</summary>
+        /// <param name="prompt">Prompt to read.</param>
+        /// <param name="timelineIndex">Timeline holding the track.</param>
+        /// <returns>The keyframe time offsets, in order.</returns>
+        public static List<float> ColorKeyFrameTimes(this TutorialPrompt prompt, int timelineIndex)
+        {
+            Track track = prompt.Visual.GetTimeline(timelineIndex).GetTrack(Track.TrackType.TRACK_COLOR);
+            return [.. track.keyFrames.Select(keyFrame => keyFrame.timeOffset)];
+        }
+
+        /// <summary>Every physical candy body the scene currently offers to its systems.</summary>
+        /// <param name="scene">Scene to read.</param>
+        /// <returns>The active bodies, in scene enumeration order.</returns>
+        public static List<CandyBody> ActiveBodies(this GameScene scene)
+        {
+            return [.. scene.ActiveCandyBodies()];
+        }
+
+        /// <summary>
+        /// The active bodies one scene system is allowed to act on. Reads the scene's own filtered
+        /// enumerator, so a system that stopped consulting <see cref="CandyBodyEligibility"/> fails
+        /// here rather than being re-derived by the test.
+        /// </summary>
+        /// <param name="scene">Scene to read.</param>
+        /// <param name="interaction">The scene system asking for candidates.</param>
+        /// <returns>The eligible active bodies, in scene enumeration order.</returns>
+        public static List<CandyBody> ActiveBodies(this GameScene scene, CandyInteraction interaction)
+        {
+            return [.. scene.ActiveCandyBodies(interaction)];
+        }
+
+        /// <summary>The active body standing on a physics point, or null when no body owns it.</summary>
+        /// <param name="scene">Scene to read.</param>
+        /// <param name="point">Physics point to resolve.</param>
+        /// <returns>The owning body, or <see langword="null"/>.</returns>
+        public static CandyBody BodyForPoint(this GameScene scene, ConstrainedPoint point)
+        {
+            return scene.CandyBodyForPointOrNull(point);
+        }
+
+        /// <summary>
+        /// The rest length of the leash a rocket created when it bound a candy - the reach it will
+        /// reel in. It has to be measured to the candy the rocket actually bound; a rocket that took
+        /// its reach from whichever candy was primary gets a leash that is slack or snaps.
+        /// </summary>
+        /// <param name="rocket">Rocket to inspect.</param>
+        /// <param name="candy">Candy the rocket is expected to have bound.</param>
+        /// <returns>The rest length, or <see langword="null"/> when the rocket holds no leash on it.</returns>
+        public static float? BindReach(this Rocket rocket, CandyContext candy)
+        {
+            foreach (Constraint constraint in rocket.point.constraints)
+            {
+                if (constraint.cp == candy.WholeBody.Point)
+                {
+                    return constraint.restLength;
+                }
+            }
+
+            return null;
+        }
+
+        /// <summary>
+        /// The grab whose hook sits closest to a world position. Shipped levels are addressed by
+        /// where their hooks are authored, so a test names the rope it cuts the way a player sees it
+        /// rather than by an index into load order.
+        /// </summary>
+        /// <param name="scene">Scene to read.</param>
+        /// <param name="world">World position to search near.</param>
+        /// <returns>The nearest grab.</returns>
+        public static Grab GrabNearestTo(this GameScene scene, Vector world)
+        {
+            Grab nearest = null;
+            float best = float.MaxValue;
+            foreach (Grab grab in scene.Grabs())
+            {
+                float dx = grab.x - world.X;
+                float dy = grab.y - world.Y;
+                float distance = (dx * dx) + (dy * dy);
+                if (distance < best)
+                {
+                    best = distance;
+                    nearest = grab;
+                }
+            }
+
+            return nearest;
+        }
+
+        /// <summary>
+        /// The rope a grab currently holds, or <see langword="null"/> when it holds none. Exists so a
+        /// test can read a hook's rope without naming the field, which the axis refactor renames.
+        /// </summary>
+        /// <param name="grab">Grab to inspect.</param>
+        /// <returns>The held rope, or <see langword="null"/>.</returns>
+        public static Bungee RopeOf(this Grab grab)
+        {
+            return grab.Rope;
+        }
+
+        /// <summary>Whether the primary candy's lifecycle leaves no whole body in play.</summary>
+        /// <param name="scene">Scene to read.</param>
+        /// <returns><see langword="true"/> when the primary candy is removed, hidden, or split.</returns>
+        public static bool PrimaryCandyGone(this GameScene scene)
+        {
+            return scene.Candies()[0].HasNoWholeBodyInPlay;
+        }
+
+        /// <summary>Ropes still attached (uncut) to the given candy.</summary>
+        /// <param name="scene">Scene to read.</param>
+        /// <param name="candy">Candy to inspect.</param>
+        /// <returns>The number of uncut ropes whose tail is this candy.</returns>
+        public static int AttachedRopeCount(this GameScene scene, CandyContext candy)
+        {
+            return scene.AttachedRopeCount(candy.WholeBody);
+        }
+
+        /// <summary>Ropes still attached (uncut) to the exact candy body.</summary>
+        /// <param name="scene">Scene to read.</param>
+        /// <param name="body">Body to inspect.</param>
+        /// <returns>The number of uncut ropes whose tail is this body's point.</returns>
+        public static int AttachedRopeCount(this GameScene scene, CandyBody body)
+        {
+            int count = 0;
+            foreach (Grab grab in scene.Grabs())
+            {
+                if (grab.Rope != null && grab.Rope.tail == body.Point && grab.Rope.cut == -1)
+                {
+                    count++;
+                }
+            }
+
+            return count;
+        }
+
+        /// <summary>Snails riding the given candy.</summary>
+        /// <param name="scene">Scene to read.</param>
+        /// <param name="candy">Candy to inspect.</param>
+        /// <returns>The count of active snails on this candy.</returns>
+        public static int SnailCount(this GameScene scene, CandyContext candy)
+        {
+            return scene.ActiveSnailCountForPoint(candy.WholeBody.Point);
+        }
+
+        /// <summary>Whether the mouse system currently carries the given candy.</summary>
+        /// <param name="scene">Scene to read.</param>
+        /// <param name="candy">Candy to inspect.</param>
+        /// <returns><see langword="true"/> when the active mouse holds this candy.</returns>
+        public static bool MouseCarries(this GameScene scene, CandyContext candy)
+        {
+            MiceObject mice = Field<MiceObject>(scene, "miceManager");
+            return mice?.CarriesCandy(candy.WholeBody.Point) == true;
+        }
+
+        /// <summary>Asserts that a retired whole candy has no observable live attachment owner.</summary>
+        /// <param name="scene">Scene that owned the candy.</param>
+        /// <param name="candy">Retired candy to inspect.</param>
+        public static void AssertNoLiveAttachments(this GameScene scene, CandyContext candy)
+        {
+            Assert.Equal(0, scene.AttachedRopeCount(candy));
+            Assert.Null(candy.WholeBody.Bubble);
+            Assert.Null(candy.Lifecycle.Attachments.Rocket);
+            Assert.Null(candy.Lifecycle.Attachments.Hand);
+            Assert.False(scene.MouseCarries(candy));
+            Assert.Null(candy.Lifecycle.Attachments.AntSegment);
+            Assert.Null(candy.Lifecycle.Attachments.LastAntSegment);
+            Assert.Equal(0, scene.SnailCount(candy));
+            Assert.False(candy.Lifecycle.Attachments.InLantern);
+            Assert.False(candy.Lifecycle.Attachments.HasAny);
+            Assert.False(candy.Lifecycle.IsGravitySuppressed);
+            Assert.False(candy.WholeBody.Point.disableGravity);
+        }
+
+        /// <summary>Invokes the scene's hazard entry point to model repeated overlap in one update.</summary>
+        /// <param name="scene">Scene whose hazard path is invoked.</param>
+        /// <param name="body">Body intersecting the hazard.</param>
+        public static void BreakCandyBody(this GameScene scene, CandyBody body)
+        {
+            MethodInfo method = typeof(GameScene).GetMethod("BreakCandyBody", Instance)
+                ?? throw new MissingMethodException(nameof(GameScene), "BreakCandyBody");
+            _ = method.Invoke(scene, [body]);
+        }
+
+        /// <summary>Number of live candy-break particle systems in the scene animation pool.</summary>
+        /// <param name="scene">Scene to inspect.</param>
+        /// <returns>The live candy-break effect count.</returns>
+        public static int CandyBreakEffectCount(this GameScene scene)
+        {
+            AnimationsPool pool = Field<AnimationsPool>(scene, "aniPool");
+            return pool.GetChilds().Values.OfType<CandyBreak>().Count();
+        }
+
+        /// <summary>
+        /// Fills in every intact rope's stretch level the way drawing it would. Headless scenes never
+        /// draw, and rope steering only runs on a stretched rope, so a test of that steering calls
+        /// this before each step.
+        /// </summary>
+        /// <param name="scene">Scene whose ropes to measure.</param>
+        public static void MeasureRopeStretchAsDrawn(this GameScene scene)
+        {
+            foreach (Grab grab in scene.Grabs())
+            {
+                Bungee rope = grab.Rope;
+                if (rope == null || rope.cut != -1 || rope.parts.Count < 2)
+                {
+                    continue;
+                }
+
+                Vector first = rope.parts[0].pos;
+                Vector second = rope.parts[1].pos;
+                float dx = first.X - second.X;
+                float dy = first.Y - second.Y;
+                rope.relaxed = Bungee.StretchLevelFor(MathF.Sqrt((dx * dx) + (dy * dy)));
+            }
+        }
+
+        /// <summary>Number of live broken-wing bursts in the scene animation pool.</summary>
+        /// <param name="scene">Scene to inspect.</param>
+        /// <returns>The live wing-break effect count.</returns>
+        public static int WingsBreakEffectCount(this GameScene scene)
+        {
+            AnimationsPool pool = Field<AnimationsPool>(scene, "aniPool");
+            return pool.GetChilds().Values.OfType<WingsBreak>().Count();
+        }
+
+        /// <summary>Number of live bubble-pop animations in the scene animation pool.</summary>
+        /// <param name="scene">Scene to inspect.</param>
+        /// <returns>The live bubble-pop effect count.</returns>
+        public static int BubblePopEffectCount(this GameScene scene)
+        {
+            AnimationsPool pool = Field<AnimationsPool>(scene, "aniPool");
+            Texture2D bubbleTexture = Application.GetTexture(Resources.Img.ObjBubble);
+            return pool.GetChilds().Values
+                .OfType<Animation>()
+                .Count(animation => ReferenceEquals(animation.texture, bubbleTexture));
+        }
+
+        /// <summary>Number of live spider victory images in the scene animation pool.</summary>
+        /// <param name="scene">Scene to inspect.</param>
+        /// <returns>The live spider victory-image count.</returns>
+        public static int SpiderVictoryEffectCount(this GameScene scene)
+        {
+            AnimationsPool pool = Field<AnimationsPool>(scene, "aniPool");
+            Texture2D spiderTexture = Application.GetTexture(Resources.Img.ObjSpider);
+            return pool.GetChilds().Values
+                .OfType<Image>()
+                .Count(effect => ReferenceEquals(effect.texture, spiderTexture) && effect.GetChilds().Count > 0);
+        }
+
+        /// <summary>
+        /// Parks a second merged ghost bubble for an owner. Scenario XML cannot directly author the
+        /// transient two-ghost post-merge state, so this probe establishes only that private state.
+        /// </summary>
+        public static void ParkSecondGhostBubble(this GameScene scene, CandyBody owner, GameObject bubble)
+        {
+            FieldInfo field = typeof(GameScene).GetField("parkedGhostBubble", Instance)
+                ?? throw new MissingFieldException(nameof(GameScene), "parkedGhostBubble");
+            field.SetValue(scene, new ParkedGhostBubble(owner, bubble));
+        }
+
+        /// <summary>Gets the ghost bubble parked behind a merged candy's active ghost bubble.</summary>
+        public static GameObject PendingSecondGhostBubble(this GameScene scene)
+        {
+            return Field<ParkedGhostBubble>(scene, "parkedGhostBubble")?.Bubble;
+        }
+
+        /// <summary>Installs an exact lantern ticket for delayed-callback identity tests.</summary>
+        public static void SetPendingLanternCapture(
+            this GameScene scene,
+            PendingLanternCapture capture)
+        {
+            FieldInfo field = typeof(GameScene).GetField("pendingLanternCapture", Instance)
+                ?? throw new MissingFieldException(nameof(GameScene), "pendingLanternCapture");
+            field.SetValue(scene, capture);
+        }
+
+        /// <summary>Gets the scene's current delayed lantern-capture ticket.</summary>
+        public static PendingLanternCapture PendingLanternCapture(this GameScene scene)
+        {
+            return Field<PendingLanternCapture>(scene, "pendingLanternCapture");
+        }
+
+        /// <summary>Invokes the real delayed lantern completion callback with an exact ticket.</summary>
+        public static void CompletePendingLanternCapture(
+            this GameScene scene,
+            PendingLanternCapture capture)
+        {
+            MethodInfo method = typeof(GameScene).GetMethod(
+                "CompletePendingLanternCapture",
+                Instance)
+                ?? throw new MissingMethodException(nameof(GameScene), "CompletePendingLanternCapture");
+            _ = method.Invoke(scene, [capture]);
+        }
+
+        /// <summary>Whether any conveyor belt has bound the given grab.</summary>
+        /// <param name="scene">Scene to read.</param>
+        /// <param name="grab">Grab to inspect.</param>
+        /// <returns><see langword="true"/> when a belt holds this grab.</returns>
+        public static bool BeltHolds(this GameScene scene, Grab grab)
+        {
+            foreach (ConveyorBelt belt in scene.Conveyors().Iterator())
+            {
+                if (belt.HasItem(grab))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        /// <summary>Whether the first DJ disc has captured the given grab.</summary>
+        /// <param name="scene">Scene to read.</param>
+        /// <param name="grab">Grab to inspect.</param>
+        /// <returns><see langword="true"/> when the disc rotates this grab.</returns>
+        public static bool DiscHolds(this GameScene scene, Grab grab)
+        {
+            foreach (RotatedCircle disc in scene.Discs())
+            {
+                if (disc.containedObjects.IndexOf(grab) != -1)
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private static T Field<T>(GameScene scene, string name)
+        {
+            FieldInfo field = typeof(GameScene).GetField(name, Instance)
+                ?? throw new MissingFieldException(nameof(GameScene), name);
+            return (T)field.GetValue(scene);
+        }
+    }
+}

@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+  <string name="app_name">Cut the Rope DX</string>
+  <string name="loading_title">CUT THE ROPE DX</string>
+  <string name="loading_message">Loading…</string>
+  <string name="fatal_error_title">Cut the Rope DX could not start</string>
+  <string name="fatal_error_close">Close</string>
+</resources>

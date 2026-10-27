@@ -5,6 +5,7 @@ using Android.Content;
 using Android.Opengl;
 using Android.Util;
 using Android.Views;
+
 using Javax.Microedition.Khronos.Opengles;
 
 using SkiaSharp;

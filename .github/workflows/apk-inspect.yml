@@ -1,0 +1,55 @@
+name: Inspect ARMv7 APK
+
+on:
+    push:
+        branches: [arena/747e4819-ctrdx]
+
+permissions:
+    actions: read
+    contents: read
+
+jobs:
+    inspect:
+        runs-on: ubuntu-latest
+        steps:
+            - name: Set up Android SDK
+              uses: android-actions/setup-android@v4
+              with:
+                  packages: "platform-tools platforms;android-36 build-tools;36.0.0"
+                  log-accepted-android-sdk-licenses: "false"
+
+            - name: Download and inspect the ARMv7 artifact
+              env:
+                  GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+              run: |
+                  set -euo pipefail
+                  gh api "repos/${{ github.repository }}/actions/artifacts/12713081807/zip" > "$RUNNER_TEMP/arm-artifact.zip"
+                  python3 - "$RUNNER_TEMP" <<'PY'
+                  from pathlib import Path
+                  import sys
+                  import zipfile
+
+                  temp = Path(sys.argv[1])
+                  with zipfile.ZipFile(temp / "arm-artifact.zip") as artifact:
+                      print("Artifact entries:", artifact.namelist())
+                      artifact.extractall(temp / "arm-artifact")
+                  apks = list((temp / "arm-artifact").rglob("*.apk"))
+                  assert len(apks) == 1, apks
+                  apk = apks[0]
+                  print("APK:", apk)
+                  print("APK bytes:", apk.stat().st_size)
+                  with zipfile.ZipFile(apk) as package:
+                      bad = package.testzip()
+                      assert bad is None, bad
+                      names = package.namelist()
+                      print("APK entries:", len(names))
+                      print("Native libraries:")
+                      for name in names:
+                          if name.startswith("lib/") and name.endswith(".so"):
+                              print(" ", name)
+                      print("Manifest bytes:", len(package.read("AndroidManifest.xml")))
+                  PY
+                  APK=$(find "$RUNNER_TEMP/arm-artifact" -name '*.apk' -print -quit)
+                  sha256sum "$APK"
+                  "$ANDROID_HOME/build-tools/36.0.0/aapt2" dump badging "$APK"
+                  "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose --print-certs "$APK"

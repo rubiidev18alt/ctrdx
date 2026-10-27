@@ -1,0 +1,482 @@
+using System;
+using System.Collections.Generic;
+
+using CutTheRopeDX.Framework;
+using CutTheRopeDX.Framework.Core;
+using CutTheRopeDX.Framework.Diagnostics;
+using CutTheRopeDX.Framework.Helpers;
+using CutTheRopeDX.Framework.Platform;
+using CutTheRopeDX.Framework.Visual;
+
+using Microsoft.Extensions.Logging;
+
+namespace CutTheRopeDX.GameMain
+{
+    /// <summary>
+    /// The main water body element.
+    /// </summary>
+    internal sealed class WaterElement : Image, ITimelineDelegate
+    {
+        /// <summary>
+        /// Size of the top shadow tile.
+        /// </summary>
+        private Vector topShadowSize;
+
+        /// <summary>
+        /// Size of the bottom shadow tile.
+        /// </summary>
+        private Vector bottomShadowSize;
+
+        /// <summary>
+        /// Size of the front water tile.
+        /// </summary>
+        private Vector topTileSize;
+
+        /// <summary>
+        /// Size of the back water tile.
+        /// </summary>
+        private Vector backTileSize;
+
+        /// <summary>
+        /// Horizontal scroll offset for the front water tile.
+        /// </summary>
+        private float xOffsetTop;
+
+        /// <summary>
+        /// Horizontal scroll offset for the back water tile.
+        /// </summary>
+        private float xOffsetBack;
+
+        /// <summary>
+        /// Bubble particle system clipped inside the water area.
+        /// </summary>
+        private WaterBubbles bubbles;
+
+        /// <summary>
+        /// Animation pool used for water particles and particle completion callbacks.
+        /// </summary>
+        private AnimationsPool aniPool;
+
+        /// <summary>
+        /// Scissor element used to clip the bubble particle system.
+        /// </summary>
+        private ScissorElement scissorElement;
+
+        /// <summary>
+        /// Dispatcher used to restart light timelines after randomized delays.
+        /// </summary>
+        private DelayedDispatcher dd;
+
+        /// <summary>
+        /// Randomly repositioned spotlight element.
+        /// </summary>
+        private Image spotLight;
+
+        /// <summary>Ambient light strips distributed across the current water width.</summary>
+        private readonly List<Image> ambientLights = [];
+
+        /// <summary>
+        /// Whether this water element is being released and should stop drawing or updating.
+        /// </summary>
+        private bool isReleasing;
+
+        /// <summary>
+        /// Checks whether the water texture resource is available.
+        /// </summary>
+        /// <returns><see langword="true"/> if the water texture can be loaded; otherwise, <see langword="false"/>.</returns>
+        public static bool IsWaterTextureAvailable()
+        {
+            try
+            {
+                _ = Application.GetTexture(Resources.Img.WaterTile);
+                return true;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// Creates a new <see cref="WaterElement"/> with the specified dimensions.
+        /// </summary>
+        /// <param name="w">The width of the water element.</param>
+        /// <param name="h">The height of the water element.</param>
+        /// <returns>A new <see cref="WaterElement"/>, or <see langword="null"/> if texture loading fails.</returns>
+        public static WaterElement CreateWithWidthHeight(float w, float h)
+        {
+            try
+            {
+                return new WaterElement().InitWithWidthHeight(w, h);
+            }
+            catch (Exception failure)
+            {
+                // The caller checks IsWaterTextureAvailable first, so reaching here means
+                // something other than a missing texture went wrong.
+                ILogger logger = Log.For(LogCategories.ContentResources);
+                WaterElementLog.CreateFailed(logger, failure);
+                return null;
+            }
+        }
+
+        /// <summary>
+        /// The water light effect that shines through water
+        /// </summary>
+        /// <param name="x">The X axis position</param>
+        /// <param name="quad">The quad number of the water light (water_tile.json)</param>
+        /// <param name="color">Color to use</param>
+        /// <param name="d">The timeline delegate that receives animation callbacks.</param>
+        /// <returns>The configured light <see cref="Image"/> with pulse and delayed-start timelines.</returns>
+        private static Image CreateLightWithXPosquadalphaColordelegate(float x, int quad, RGBAColor color, ITimelineDelegate d)
+        {
+            Image light = FromResource(Resources.Img.WaterTile, quad);
+            light.parentAnchor = 9;
+            light.anchor = 9;
+            light.x = x;
+            light.color = RGBAColor.transparentRGBA;
+            // light.DoRestoreCutTransparency();
+
+            Timeline pulse = new Timeline().InitWithMaxKeyFramesOnTrack(5);
+            pulse.AddKeyFrame(KeyFrame.MakeColor(RGBAColor.transparentRGBA, KeyFrame.TransitionType.FRAME_TRANSITION_IMMEDIATE, 0f));
+            pulse.AddKeyFrame(KeyFrame.MakeColor(color, KeyFrame.TransitionType.FRAME_TRANSITION_LINEAR, 0.7f));
+            pulse.AddKeyFrame(KeyFrame.MakeColor(color, KeyFrame.TransitionType.FRAME_TRANSITION_LINEAR, 0.6f));
+            pulse.AddKeyFrame(KeyFrame.MakeColor(RGBAColor.transparentRGBA, KeyFrame.TransitionType.FRAME_TRANSITION_LINEAR, 0.7f));
+            pulse.delegateTimelineDelegate = d;
+            _ = light.AddTimeline(pulse);
+
+            Timeline delayedStart = new Timeline().InitWithMaxKeyFramesOnTrack(2);
+            delayedStart.AddKeyFrame(KeyFrame.MakeSingleAction(light, ACTION_PLAY_TIMELINE, 0, 0, RND_RANGE(0, 20) / 10f));
+            _ = light.AddTimeline(delayedStart);
+            light.PlayTimeline(1);
+            return light;
+        }
+
+        /// <summary>
+        /// Initializes the water element with the specified dimensions, setting up tiles, lights, bubbles, and reveal animation.
+        /// </summary>
+        /// <param name="w">The width of the water element.</param>
+        /// <param name="h">The height of the water element.</param>
+        /// <returns>This instance if initialization succeeds; otherwise, <see langword="null"/>.</returns>
+        public WaterElement InitWithWidthHeight(float w, float h)
+        {
+            if (InitWithTexture(Application.GetTexture(Resources.Img.WaterTile)) == null)
+            {
+                return null;
+            }
+
+            width = (int)w;
+            height = (int)h;
+            topShadowSize = GetQuadSize(Resources.Img.WaterTile, 1);
+            bottomShadowSize = GetQuadSize(Resources.Img.WaterTile, 0);
+            topTileSize = GetQuadSize(Resources.Img.WaterTile, 3);
+            backTileSize = GetQuadSize(Resources.Img.WaterTile, 2);
+            xOffsetBack = backTileSize.X;
+
+            const int ambientLightCount = 10;
+            for (int i = 0; i <= ambientLightCount; i++)
+            {
+                RGBAColor alphaColor = (i is 0 or ambientLightCount)
+                    ? RGBAColor.MakeRGBA(1f, 1f, 1f, 0.5f)
+                    : RGBAColor.solidOpaqueRGBA;
+                Image light = CreateLightWithXPosquadalphaColordelegate(width / (float)ambientLightCount * (i - 1f), 7, alphaColor, this);
+                ambientLights.Add(light);
+                _ = AddChild(light);
+            }
+
+            spotLight = CreateLightWithXPosquadalphaColordelegate(
+                RND_RANGE(width / 4, width * 3 / 4),
+                6,
+                RGBAColor.MakeRGBA(1f, 1f, 1f, 0.6f),
+                this);
+            spotLight.SetName("spot");
+            _ = AddChild(spotLight);
+
+            Timeline reveal = new Timeline().InitWithMaxKeyFramesOnTrack(2);
+            reveal.AddKeyFrame(KeyFrame.MakeColor(RGBAColor.transparentRGBA, KeyFrame.TransitionType.FRAME_TRANSITION_IMMEDIATE, 0f));
+            reveal.AddKeyFrame(KeyFrame.MakeColor(RGBAColor.solidOpaqueRGBA, KeyFrame.TransitionType.FRAME_TRANSITION_LINEAR, 0.1f));
+            _ = AddTimeline(reveal);
+            PlayTimeline(0);
+
+            aniPool = new AnimationsPool
+            {
+                parentAnchor = 9
+            };
+            _ = AddChild(aniPool);
+
+            Image bubbleGrid = FromResource(Resources.Img.WaterTile);
+            if (new WaterBubbles().InitWithTotalParticlesandImageGrid(40, bubbleGrid) is WaterBubbles waterBubbles)
+            {
+                bubbles = waterBubbles;
+                bubbles.width = width;
+                bubbles.height = height;
+                bubbles.x = width / 2f;
+                bubbles.particlesDelegate = aniPool.ParticlesFinished;
+                bubbles.StartSystem(1);
+
+                scissorElement = new ScissorElement
+                {
+                    width = width,
+                    height = height,
+                    y = topTileSize.Y
+                };
+                _ = scissorElement.AddChild(bubbles);
+                _ = aniPool.AddChild(scissorElement);
+            }
+
+            return this;
+        }
+
+        /// <summary>
+        /// Resizes the water body to cover responsive world bounds without moving its surface.
+        /// </summary>
+        /// <param name="left">Left edge of the required world-space coverage.</param>
+        /// <param name="right">Right edge of the required world-space coverage.</param>
+        /// <param name="bottom">Bottom edge of the required world-space coverage.</param>
+        public void RelayoutCoverage(float left, float right, float bottom)
+        {
+            float oldWidth = width;
+            float spotFraction = oldWidth > 0f && spotLight != null
+                ? spotLight.x / oldWidth
+                : 0.5f;
+            float coverageLeft = MathF.Floor(left);
+            float coverageRight = MathF.Ceiling(right);
+
+            x = coverageLeft;
+            width = Math.Max(0, (int)(coverageRight - coverageLeft));
+            height = Math.Max(0, (int)MathF.Ceiling(bottom - y));
+
+            if (bubbles != null)
+            {
+                bubbles.width = width;
+                bubbles.height = height;
+                bubbles.x = width / 2f;
+                bubbles.posVar.X = width / 2f;
+            }
+
+            if (scissorElement != null)
+            {
+                scissorElement.width = width;
+                scissorElement.height = height;
+            }
+
+            int ambientLightCount = ambientLights.Count - 1;
+            if (ambientLightCount > 0)
+            {
+                for (int i = 0; i < ambientLights.Count; i++)
+                {
+                    ambientLights[i].x = width / (float)ambientLightCount * (i - 1f);
+                }
+            }
+
+            _ = (spotLight?.x = Math.Clamp(spotFraction * width, width / 4f, width * 3f / 4f));
+        }
+
+        /// <summary>Projects the world-space water clip into the camera's viewport coordinates.</summary>
+        /// <param name="cameraPosition">World-space top-left of the camera.</param>
+        /// <param name="cameraScale">World-to-viewport scale.</param>
+        public void RelayoutViewportClip(Vector cameraPosition, float cameraScale)
+        {
+            if (scissorElement == null || cameraScale <= 0f)
+            {
+                return;
+            }
+
+            scissorElement.x = (x - cameraPosition.X) * cameraScale;
+            scissorElement.y = (y + topTileSize.Y - cameraPosition.Y) * cameraScale;
+            scissorElement.width = (int)MathF.Ceiling(width * cameraScale);
+            scissorElement.height = (int)MathF.Ceiling(height * cameraScale);
+        }
+
+        /// <summary>
+        /// Draws the back layer of the water (bottom shadow and back tile).
+        /// </summary>
+        public void DrawBack()
+        {
+            if (isReleasing)
+            {
+                return;
+            }
+
+            Renderer.SetColor(color.ToWhiteAlphaColor());
+            float bottomY = drawY + height > SCREEN_HEIGHT ? drawY + height : SCREEN_HEIGHT;
+            DrawHelper.DrawImageTiled(texture, 0, drawX, bottomY - bottomShadowSize.Y, width, topShadowSize.Y);
+            DrawHelper.DrawImageTiled(texture, 2, drawX - MathF.Ceiling(xOffsetBack), drawY, width + MathF.Floor(xOffsetBack), backTileSize.Y);
+            Renderer.SetColor(Color.White);
+        }
+
+        /// <summary>
+        /// Emits bubble particles at the specified position.
+        /// </summary>
+        /// <param name="tx">The X position to spawn particles at.</param>
+        /// <param name="ty">The Y position to spawn particles at.</param>
+        public void AddParticlesAtXY(float tx, float ty)
+        {
+            if (isReleasing
+                || bubbles == null
+                || tx < x
+                || tx > x + width
+                || ty <= y
+                || ty > y + height)
+            {
+                return;
+            }
+
+            float originalX = bubbles.x;
+            float originalY = bubbles.y;
+            bubbles.x = tx;
+            bubbles.y = ty;
+            bubbles.posVar.X = 10f;
+            bubbles.posVar.Y = 10f;
+            for (int i = 0; i < 3; i++)
+            {
+                _ = bubbles.AddParticle();
+            }
+
+            bubbles.x = originalX;
+            bubbles.y = originalY;
+            bubbles.posVar.X = width / 2f;
+            bubbles.posVar.Y = 0f;
+        }
+
+        /// <summary>
+        /// Emits water drop particles at the specified position.
+        /// </summary>
+        /// <param name="tx">The X position to spawn water drops at.</param>
+        /// <param name="ty">The Y position to spawn water drops at.</param>
+        public void AddWaterParticlesAtXY(float tx, float ty)
+        {
+            if (isReleasing || aniPool == null)
+            {
+                return;
+            }
+
+            Image image = FromResource(Resources.Img.WaterTile);
+            // image.DoRestoreCutTransparency();
+            if (new WaterDrops().InitWithTotalParticlesandImageGrid(10, image) is WaterDrops drops)
+            {
+                drops.color = RGBAColor.blackRGBA;
+                drops.x = tx;
+                drops.y = ty;
+                drops.particlesDelegate = aniPool.ParticlesFinished;
+                _ = aniPool.AddChild(drops);
+                drops.StartSystem(10);
+            }
+        }
+
+        /// <summary>
+        /// Draws the front layer of the water (top shadow, bubbles with additive blending, and top tile).
+        /// </summary>
+        public void DrawFront()
+        {
+            if (isReleasing)
+            {
+                return;
+            }
+
+            PreDraw();
+            DrawHelper.DrawImageTiled(texture, 1, drawX, drawY, width, topShadowSize.Y);
+
+            Renderer.SetBlendFunc(BlendingFactor.GLSRCALPHA, BlendingFactor.GLONE);
+            PostDraw();
+
+            Renderer.SetBlendFunc(BlendingFactor.GLONE, BlendingFactor.GLONEMINUSSRCALPHA);
+            Renderer.SetColor(color.ToWhiteAlphaColor());
+            DrawHelper.DrawImageTiled(texture, 3, drawX - MathF.Ceiling(xOffsetTop), drawY, width + MathF.Floor(xOffsetTop), topTileSize.Y);
+            Renderer.SetColor(Color.White);
+        }
+
+        /// <inheritdoc/>
+        public override void Draw()
+        {
+            DrawFront();
+        }
+
+        /// <inheritdoc/>
+        public override void Update(float delta)
+        {
+            if (isReleasing)
+            {
+                return;
+            }
+
+            base.Update(delta);
+            if (Mover.MoveVariableToTarget(ref xOffsetBack, 0f, 100f, delta))
+            {
+                xOffsetBack = backTileSize.X;
+            }
+            if (Mover.MoveVariableToTarget(ref xOffsetTop, topTileSize.X, 100f, delta))
+            {
+                xOffsetTop = 0f;
+            }
+            _ = (bubbles?.y = height + y);
+            dd?.Update(delta);
+        }
+
+        /// <summary>
+        /// Marks this water element for release, cancelling all pending dispatches and suppressing further drawing/updating.
+        /// </summary>
+        public void PrepareToRelease()
+        {
+            isReleasing = true;
+            dd?.CancelAllDispatches();
+        }
+
+        /// <inheritdoc/>
+        public void TimelinereachedKeyFramewithIndex(Timeline t, KeyFrame k, int i)
+        {
+        }
+
+        /// <inheritdoc/>
+        public void TimelineFinished(Timeline t)
+        {
+            if (isReleasing)
+            {
+                return;
+            }
+
+            dd ??= new DelayedDispatcher();
+            dd.CallObjectSelectorParamafterDelay(Selector_playFirstTimeline, t.element, RND_RANGE(0, 20) / 20f);
+
+            if (ReferenceEquals(t.element, spotLight))
+            {
+                t.element.x = RND_RANGE(width / 4, width * 3 / 4);
+            }
+        }
+
+        /// <summary>
+        /// Callback that plays the first timeline on the given element, used as a delayed dispatch selector.
+        /// </summary>
+        /// <param name="param">The element to play the timeline on.</param>
+        private static void Selector_playFirstTimeline(FrameworkTypes param)
+        {
+            if (param is BaseElement element)
+            {
+                element.PlayTimeline(0);
+            }
+        }
+
+        /// <inheritdoc/>
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing)
+            {
+                PrepareToRelease();
+                dd?.Dispose();
+                dd = null;
+                bubbles = null;
+                scissorElement = null;
+                aniPool = null;
+                spotLight = null;
+                ambientLights.Clear();
+            }
+            base.Dispose(disposing);
+        }
+    }
+
+    /// <summary>Log messages for the water element.</summary>
+    internal static partial class WaterElementLog
+    {
+        [LoggerMessage(Level = LogLevel.Warning, Message = "Could not create the water element.")]
+        public static partial void CreateFailed(ILogger logger, Exception exception);
+    }
+}

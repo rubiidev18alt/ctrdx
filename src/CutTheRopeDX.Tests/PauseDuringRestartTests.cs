@@ -1,0 +1,327 @@
+using CutTheRopeDX.Framework;
+using CutTheRopeDX.Framework.Core;
+using CutTheRopeDX.Framework.Platform;
+using CutTheRopeDX.Framework.Visual;
+using CutTheRopeDX.GameMain;
+
+using Xunit;
+
+namespace CutTheRopeDX.Tests
+{
+    public sealed class PauseDuringRestartTests
+    {
+        private static (GameController Controller, GameScene Scene) Load()
+        {
+            _ = HeadlessGame.Boot();
+            GameController controller = HeadlessGame.LoadLevelWithController(pack: 1, level: 4);
+            return (controller, (GameScene)controller.GetView(0).GetChild(0));
+        }
+
+        private static Text PauseMapNameLabel(GameController controller)
+        {
+            return (Text)controller.GetView(0).GetChild(GameView.VIEW_ELEMENT_PAUSE_MENU).GetChildWithName("mapNameLabel");
+        }
+
+        private static Text PauseExitLabel(GameController controller)
+        {
+            BaseElement buttonsGroup = controller.GetView(0).GetChild(GameView.VIEW_ELEMENT_PAUSE_BUTTONS);
+            BaseElement buttons = buttonsGroup.GetChild(0);
+            Button exit = (Button)buttons.GetChild(1);
+            return (Text)exit.GetChild(0).GetChild(0);
+        }
+
+        [Theory]
+        [InlineData("CLOSE_TAB_BUTTON", "Close tab")]
+        [InlineData("QUIT_BUTTON", "Quit")]
+        public void CustomLevelExitUsesTheHostLabel(string labelKey, string expected)
+        {
+            _ = HeadlessGame.Boot();
+            IHostApp previousHost = PlatformServices.Host;
+
+            try
+            {
+                PlatformServices.Host = new LabelHost(labelKey);
+                CustomLevelSession.Activate("pause-exit-label-test.xml");
+
+                GameController controller = HeadlessGame.LoadLevelWithController(pack: 1, level: 4);
+
+                Assert.Equal(expected, PauseExitLabel(controller).GetString());
+            }
+            finally
+            {
+                CustomLevelSession.Clear();
+                PlatformServices.Host = previousHost;
+            }
+        }
+
+        [Fact]
+        public void PausingNamedCustomLevelShowsResolvedLevelName()
+        {
+            (GameController controller, GameScene scene) = Load();
+            scene.levelName = "My Custom Level";
+
+            try
+            {
+                CustomLevelSession.Activate("pause-name-test.xml");
+
+                controller.OnButtonPressed(GameControllerButtonId.Pause);
+
+                Assert.Equal("My Custom Level", PauseMapNameLabel(controller).GetString());
+            }
+            finally
+            {
+                CustomLevelSession.Clear();
+            }
+        }
+
+        [Theory]
+        [InlineData(null)]
+        [InlineData("   ")]
+        public void PausingUnnamedCustomLevelShowsBlankLabel(string levelName)
+        {
+            (GameController controller, GameScene scene) = Load();
+            scene.levelName = levelName;
+
+            try
+            {
+                CustomLevelSession.Activate("pause-name-test.xml");
+
+                controller.OnButtonPressed(GameControllerButtonId.Pause);
+
+                Assert.Equal(string.Empty, PauseMapNameLabel(controller).GetString());
+            }
+            finally
+            {
+                CustomLevelSession.Clear();
+            }
+        }
+
+        [Fact]
+        public void PausingNormalLevelShowsBestScore()
+        {
+            (GameController controller, _) = Load();
+            RootController root = Application.SharedRootController();
+            int score = Preferences.GetScoreForPackLevel(root.Box, root.Pack, root.Level);
+
+            controller.OnButtonPressed(GameControllerButtonId.Pause);
+
+            Assert.Equal(Application.GetString("BEST_SCORE") + ": " + score, PauseMapNameLabel(controller).GetString());
+        }
+
+        [Fact]
+        public void PauseIsRefusedDuringRestartDim()
+        {
+            (GameController controller, GameScene scene) = Load();
+
+            scene.AnimateLevelRestart();
+            controller.OnButtonPressed(GameControllerButtonId.Pause);
+
+            // Entering pause freezes the scene via updateable; still true means the pause was refused.
+            Assert.True(scene.updateable);
+        }
+
+        [Fact]
+        public void PauseIsAllowedOnceRestartDimFinishes()
+        {
+            (GameController controller, GameScene scene) = Load();
+
+            scene.AnimateLevelRestart();
+            HeadlessGame.StepFrames(scene, 60);
+
+            controller.OnButtonPressed(GameControllerButtonId.Pause);
+
+            Assert.False(scene.updateable);
+        }
+
+        [Fact]
+        public void PauseIsAllowedDuringNormalPlay()
+        {
+            (GameController controller, GameScene scene) = Load();
+            HeadlessGame.StepFrames(scene, 60);
+
+            controller.OnButtonPressed(GameControllerButtonId.Pause);
+
+            Assert.False(scene.updateable);
+        }
+
+        [Fact]
+        public void PauseAndRestartSameFramePauseDispatchedFirstKeepsGamePaused()
+        {
+            (GameController controller, GameScene scene) = Load();
+            HeadlessGame.StepFrames(scene, 60);
+
+            controller.OnButtonPressed(GameControllerButtonId.Pause);
+            controller.OnButtonPressed(GameControllerButtonId.Restart);
+
+            Assert.False(scene.updateable);
+            Assert.Equal(RestartPhase.Playing, scene.gameplayFlow.Phase);
+            Assert.True(controller.GetView(0).GetChild(GameView.VIEW_ELEMENT_PAUSE_MENU).IsEnabled());
+        }
+
+        [Fact]
+        public void PauseAndRestartSameFrameRestartDispatchedFirstKeepsRestartRunning()
+        {
+            (GameController controller, GameScene scene) = Load();
+            HeadlessGame.StepFrames(scene, 60);
+
+            controller.OnButtonPressed(GameControllerButtonId.Restart);
+            controller.OnButtonPressed(GameControllerButtonId.Pause);
+
+            Assert.True(scene.updateable);
+            Assert.Equal(RestartPhase.FadingOut, scene.gameplayFlow.Phase);
+            Assert.False(controller.GetView(0).GetChild(GameView.VIEW_ELEMENT_PAUSE_MENU).IsEnabled());
+        }
+
+        [Fact]
+        public void BackInputDuringRestartFadeOutIsIgnored()
+        {
+            (GameController controller, GameScene scene) = Load();
+            HeadlessGame.StepFrames(scene, 60);
+
+            controller.OnButtonPressed(GameControllerButtonId.Restart);
+            _ = controller.BackButtonPressed();
+
+            Assert.Equal(0, controller.exitCode);
+            Assert.True(scene.updateable);
+            Assert.Equal(RestartPhase.FadingOut, scene.gameplayFlow.Phase);
+            Assert.False(controller.GetView(0).GetChild(GameView.VIEW_ELEMENT_PAUSE_MENU).IsEnabled());
+        }
+
+        [Fact]
+        public void BackInputDuringRestartFadeInIsIgnored()
+        {
+            (GameController controller, GameScene scene) = Load();
+            HeadlessGame.StepFrames(scene, 60);
+            Assert.True(scene.gameplayFlow.TryBeginRestartDim());
+            Assert.Equal(RestartStep.SwapScene, scene.gameplayFlow.Advance(1f));
+
+            _ = controller.BackButtonPressed();
+
+            Assert.Equal(0, controller.exitCode);
+            Assert.True(scene.updateable);
+            Assert.Equal(RestartPhase.FadingIn, scene.gameplayFlow.Phase);
+            Assert.False(controller.GetView(0).GetChild(GameView.VIEW_ELEMENT_PAUSE_MENU).IsEnabled());
+        }
+
+        [Fact]
+        public void MenuInputDuringRestartFadeOutIsIgnored()
+        {
+            (GameController controller, GameScene scene) = Load();
+            HeadlessGame.StepFrames(scene, 60);
+
+            controller.OnButtonPressed(GameControllerButtonId.Restart);
+            _ = controller.MenuButtonPressed();
+
+            Assert.True(scene.updateable);
+            Assert.Equal(RestartPhase.FadingOut, scene.gameplayFlow.Phase);
+            Assert.False(controller.GetView(0).GetChild(GameView.VIEW_ELEMENT_PAUSE_MENU).IsEnabled());
+        }
+
+        [Fact]
+        public void MenuInputDuringRestartFadeInIsIgnored()
+        {
+            (GameController controller, GameScene scene) = Load();
+            HeadlessGame.StepFrames(scene, 60);
+            Assert.True(scene.gameplayFlow.TryBeginRestartDim());
+            Assert.Equal(RestartStep.SwapScene, scene.gameplayFlow.Advance(1f));
+
+            _ = controller.MenuButtonPressed();
+
+            Assert.True(scene.updateable);
+            Assert.Equal(RestartPhase.FadingIn, scene.gameplayFlow.Phase);
+            Assert.False(controller.GetView(0).GetChild(GameView.VIEW_ELEMENT_PAUSE_MENU).IsEnabled());
+        }
+
+        [Fact]
+        public void PauseButtonInputDuringRestartFadeOutIsIgnored()
+        {
+            (GameController controller, GameScene scene) = Load();
+            HeadlessGame.StepFrames(scene, 60);
+
+            controller.OnButtonPressed(GameControllerButtonId.Restart);
+            controller.OnButtonPressed(GameControllerButtonId.Pause);
+
+            Assert.True(scene.updateable);
+            Assert.Equal(RestartPhase.FadingOut, scene.gameplayFlow.Phase);
+            Assert.False(controller.GetView(0).GetChild(GameView.VIEW_ELEMENT_PAUSE_MENU).IsEnabled());
+        }
+
+        [Fact]
+        public void PauseButtonInputDuringRestartFadeInIsIgnored()
+        {
+            (GameController controller, GameScene scene) = Load();
+            HeadlessGame.StepFrames(scene, 60);
+            Assert.True(scene.gameplayFlow.TryBeginRestartDim());
+            Assert.Equal(RestartStep.SwapScene, scene.gameplayFlow.Advance(1f));
+
+            controller.OnButtonPressed(GameControllerButtonId.Pause);
+
+            Assert.True(scene.updateable);
+            Assert.Equal(RestartPhase.FadingIn, scene.gameplayFlow.Phase);
+            Assert.False(controller.GetView(0).GetChild(GameView.VIEW_ELEMENT_PAUSE_MENU).IsEnabled());
+        }
+
+        [Theory]
+        [InlineData("Portrait", 720, 1280)]
+        [InlineData("TallPortrait", 400, 1280)]
+        public void BestScoreLabelStaysOnScreenWhenBoostedOnANarrowViewport(string name, int width, int height)
+        {
+            LayoutSurfaces.WithSurface(width, height, () =>
+            {
+                (GameController controller, _) = Load();
+
+                controller.OnButtonPressed(GameControllerButtonId.Pause);
+
+                View view = controller.GetView(0);
+                BaseElement plate = view.GetChild(GameView.VIEW_ELEMENT_PAUSE_MENU);
+                Text label = PauseMapNameLabel(controller);
+
+                // Headless never runs the draw loop that would otherwise resolve drawX for the
+                // whole ancestor chain, so it has to be walked explicitly, parent before child,
+                // the same order PreDraw would.
+                BaseElement.CalculateTopLeft(view);
+                BaseElement.CalculateTopLeft(plate);
+                BaseElement.CalculateTopLeft(label);
+
+                // Scaled about its own center, the way PreDraw does it and the way
+                // LayoutMath.CornerAnchoredOffset corrects for: half of what the boost adds falls
+                // outside each edge, not all of it outside the right one.
+                float rightEdge = label.drawX + (label.width * (1f + label.scaleX) / 2f);
+                Rectangle visible = ScreenPresentation.Instance.Snapshot.VisibleBounds;
+
+                Assert.True(
+                    rightEdge <= visible.w + 0.1f,
+                    $"{name}: label right edge {rightEdge} ran past the viewport width {visible.w}");
+                Assert.True(label.scaleX > 1f, $"{name}: label did not pick up the narrow-viewport boost");
+            });
+        }
+
+        private sealed class LabelHost(string customLevelExitLabelKey) : IHostApp
+        {
+            public bool CanExit => false;
+
+            public bool IsTouch => false;
+
+            public string LevelEditorUrl => null;
+
+            public string CustomLevelExitLabelKey { get; } = customLevelExitLabelKey;
+
+            public void Exit()
+            {
+            }
+
+            public bool IsKeyPressed(KeyCode key)
+            {
+                return false;
+            }
+
+            public void DrawMovie()
+            {
+            }
+
+            public void OpenUrl(string url)
+            {
+            }
+        }
+    }
+}

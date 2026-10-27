@@ -1,0 +1,314 @@
+using System;
+
+using CutTheRopeDX.Framework.Core;
+using CutTheRopeDX.Framework.Helpers;
+using CutTheRopeDX.Framework.Platform;
+
+namespace CutTheRopeDX.Framework
+{
+    /// <summary>
+    /// Base class for most framework types, providing screen-coordinate transforms,
+    /// resolution helpers, and the disposable pattern.
+    /// </summary>
+    internal class FrameworkTypes : MathHelper, IDisposable
+    {
+        /// <inheritdoc />
+        public void Dispose()
+        {
+            Dispose(true);
+            GC.SuppressFinalize(this);
+        }
+
+        /// <summary>
+        /// Releases resources. Override in derived classes to free owned resources.
+        /// </summary>
+        /// <param name="disposing"><see langword="true"/> when called from <see cref="Dispose()"/>; <see langword="false"/> from finalizer.</param>
+        protected virtual void Dispose(bool disposing)
+        {
+        }
+
+        /// <summary>
+        /// Gets the shared <see cref="GLCanvas"/> instance from the application.
+        /// </summary>
+        public static GLCanvas Canvas => Application.SharedCanvas();
+
+        /// <summary>
+        /// Converts an array of <see cref="Quad2D"/> into a flat float array.
+        /// </summary>
+        /// <param name="quads">Quads to convert.</param>
+        /// <returns>A flat float array containing 8 floats per quad.</returns>
+        public static float[] ToFloatArray(Quad2D[] quads)
+        {
+            float[] array = new float[quads.Length * 8];
+            for (int i = 0; i < quads.Length; i++)
+            {
+                quads[i].ToFloatArray().CopyTo(array, i * 8);
+            }
+            return array;
+        }
+
+        /// <summary>
+        /// Converts an array of <see cref="Quad3D"/> into a flat float array.
+        /// </summary>
+        /// <param name="quads">Quads to convert.</param>
+        /// <returns>A flat float array containing 12 floats per quad.</returns>
+        public static float[] ToFloatArray(Quad3D[] quads)
+        {
+            float[] array = new float[quads.Length * 12];
+            for (int i = 0; i < quads.Length; i++)
+            {
+                quads[i].ToFloatArray().CopyTo(array, i * 12);
+            }
+            return array;
+        }
+
+        /// <summary>
+        /// Creates a <see cref="Rectangle"/> from position and size.
+        /// </summary>
+        /// <param name="xParam">X position.</param>
+        /// <param name="yParam">Y position.</param>
+        /// <param name="width">Width.</param>
+        /// <param name="height">Height.</param>
+        /// <returns>A new <see cref="Rectangle"/> with the given position and size.</returns>
+        public static Rectangle MakeRectangle(float xParam, float yParam, float width, float height)
+        {
+            return new Rectangle(xParam, yParam, width, height);
+        }
+
+        /// <summary>
+        /// Returns <paramref name="H"/> on WVGA displays, <paramref name="L"/> otherwise.
+        /// </summary>
+        /// <param name="H">Value for WVGA resolution.</param>
+        /// <param name="L">Value for non-WVGA resolution.</param>
+        /// <returns><paramref name="H"/> when running at WVGA; otherwise <paramref name="L"/>.</returns>
+        public static float WVGAH(float H, float L)
+        {
+            return IS_WVGA ? H : L;
+        }
+
+        /// <summary>
+        /// Doubles <paramref name="V"/> on WVGA displays; returns it unchanged otherwise.
+        /// </summary>
+        /// <param name="V">Value to scale.</param>
+        /// <returns><c>V * 2</c> on WVGA; otherwise <paramref name="V"/>.</returns>
+        public static float WVGAD(float V)
+        {
+            return IS_WVGA ? V * 2 : V;
+        }
+
+        /// <summary>
+        /// Returns <paramref name="H"/> on retina displays, <paramref name="L"/> otherwise.
+        /// </summary>
+        /// <param name="H">Value for retina resolution.</param>
+        /// <param name="L">Value for non-retina resolution.</param>
+        /// <returns><paramref name="H"/> on retina displays; otherwise <paramref name="L"/>.</returns>
+        public static float RT(float H, float L)
+        {
+            return IS_RETINA ? H : L;
+        }
+
+        /// <summary>
+        /// Doubles <paramref name="V"/> on retina displays; returns it unchanged otherwise.
+        /// </summary>
+        /// <param name="V">Value to scale.</param>
+        /// <returns><c>V * 2</c> on retina displays; otherwise <paramref name="V"/>.</returns>
+        public static float RTD(float V)
+        {
+            return IS_RETINA ? V * 2 : V;
+        }
+
+        /// <summary>
+        /// Doubles <paramref name="V"/> on retina or iPad displays; returns it unchanged otherwise.
+        /// </summary>
+        /// <param name="V">Value to scale.</param>
+        /// <returns><c>V * 2</c> on retina or iPad displays; otherwise <paramref name="V"/>.</returns>
+        public static float RTPD(float V)
+        {
+            return IS_RETINA | IS_IPAD ? V * 2 : V;
+        }
+
+        /// <summary>
+        /// Blending mode: source alpha.
+        /// </summary>
+        public const int BLENDING_MODE_SRC_ALPHA = 0;
+
+        /// <summary>
+        /// Blending mode: one (premultiplied alpha).
+        /// </summary>
+        public const int BLENDING_MODE_ONE = 1;
+
+        /// <summary>
+        /// Blending mode: additive.
+        /// </summary>
+        public const int BLENDING_MODE_ADDITIVE = 2;
+
+        /// <summary>
+        /// Sentinel value indicating an undefined or unset parameter.
+        /// </summary>
+        public const int UNDEFINED = -1;
+
+        /// <summary>
+        /// Epsilon used for floating-point equality comparisons.
+        /// </summary>
+        public const float FLOAT_PRECISION = 1E-06f;
+
+        /// <summary>
+        /// Horizontal alignment flag: left.
+        /// </summary>
+        public const int LEFT = 1;
+
+        /// <summary>
+        /// Horizontal alignment flag: center.
+        /// </summary>
+        public const int HCENTER = 2;
+
+        /// <summary>
+        /// Horizontal alignment flag: right.
+        /// </summary>
+        public const int RIGHT = 4;
+
+        /// <summary>
+        /// Vertical alignment flag: top.
+        /// </summary>
+        public const int TOP = 8;
+
+        /// <summary>
+        /// Vertical alignment flag: center.
+        /// </summary>
+        public const int VCENTER = 16;
+
+        /// <summary>
+        /// Vertical alignment flag: bottom.
+        /// </summary>
+        public const int BOTTOM = 32;
+
+        /// <summary>
+        /// Combined alignment: horizontal center | vertical center.
+        /// </summary>
+        public const int CENTER = 18;
+
+        /// <summary>
+        /// OpenGL color buffer bit constant.
+        /// </summary>
+        public const int GL_COLOR_BUFFER_BIT = 0;
+
+        /// <summary>
+        /// Logical screen width in game coordinates: the fixed space levels are authored in.
+        /// </summary>
+        /// <remarks>
+        /// The design size itself, not a value the host can change. It was a writable field while
+        /// the game sized itself to the window; now the window is described by
+        /// <see cref="VisibleBounds"/> and this stays the constant that world coordinates mean, so
+        /// making it settable could only reintroduce a second, disagreeing design size.
+        /// </remarks>
+        public static readonly float SCREEN_WIDTH = ViewportLayout.DesignWidth;
+
+        /// <summary>
+        /// Logical screen height in game coordinates: the fixed space levels are authored in.
+        /// </summary>
+        /// <remarks>See <see cref="SCREEN_WIDTH"/>.</remarks>
+        public static readonly float SCREEN_HEIGHT = ViewportLayout.DesignHeight;
+
+        /// <summary>
+        /// The logical region the viewport currently exposes. Elements that span the whole screen
+        /// size to this; world logic stays on <see cref="SCREEN_WIDTH"/> and
+        /// <see cref="SCREEN_HEIGHT"/>, which describe the fixed space levels are authored in.
+        /// </summary>
+        protected static Rectangle VisibleBounds =>
+            ScreenPresentation.Instance.Snapshot.VisibleBounds;
+
+        /// <summary>
+        /// Uniform scale design-space content is drawn at for the current viewport. Exposed here
+        /// so an element can size itself the moment it is created, without the scene that owns it
+        /// having to hold a copy and push it down.
+        /// </summary>
+        protected static float ContentScale => ContentFit.Scale;
+
+        /// <summary>
+        /// Actual device surface width in pixels, read from the published viewport rather than
+        /// tracked alongside it.
+        /// </summary>
+        public static float REAL_SCREEN_WIDTH =>
+            ScreenPresentation.Instance.Snapshot.SurfaceWidth;
+
+        /// <summary>
+        /// Actual device surface height in pixels, read from the published viewport rather than
+        /// tracked alongside it.
+        /// </summary>
+        public static float REAL_SCREEN_HEIGHT =>
+            ScreenPresentation.Instance.Snapshot.SurfaceHeight;
+
+        /// <summary>
+        /// <see langword="true"/> when running at iPad resolution.
+        /// </summary>
+        public static bool IS_IPAD;
+
+        /// <summary>
+        /// <see langword="true"/> when running on a retina (2x) display.
+        /// </summary>
+        public static bool IS_RETINA;
+
+        /// <summary>
+        /// <see langword="true"/> when the surface is larger than WVGA (800x480) on either axis.
+        /// </summary>
+        /// <remarks>
+        /// Derived from the published surface size. The low-memory variant the original had, which
+        /// forced this false regardless of resolution, had no caller left once the desktop and
+        /// browser hosts were the only ones.
+        /// </remarks>
+        public static bool IS_WVGA =>
+            ScreenPresentation.Instance.Snapshot.SurfaceWidth > 500
+            || ScreenPresentation.Instance.Snapshot.SurfaceHeight > 500;
+
+        /// <summary>
+        /// Opens the specified URL through the host. Hosts that cannot open one do nothing.
+        /// </summary>
+        /// <param name="url">URL to open.</param>
+        public static void OpenUrl(string url)
+        {
+            PlatformServices.Host?.OpenUrl(url);
+        }
+
+        /// <summary>
+        /// Stub API surface retained from the original Android version.
+        /// </summary>
+        public sealed class AndroidAPI
+        {
+            /// <summary>
+            /// No-op: Display a banner ad.
+            /// </summary>
+            public static void ShowBanner()
+            {
+            }
+
+            /// <summary>
+            /// No-op: Display a video banner ad.
+            /// </summary>
+            public static void ShowVideoBanner()
+            {
+            }
+
+            /// <summary>
+            /// No-op: Hide the banner ad.
+            /// </summary>
+            public static void HideBanner()
+            {
+            }
+
+            /// <summary>
+            /// No-op: Disable all banner ads.
+            /// </summary>
+            public static void DisableBanners()
+            {
+            }
+
+            /// <summary>
+            /// Exits the application.
+            /// </summary>
+            public static void ExitApp()
+            {
+                PlatformServices.Host?.Exit();
+            }
+        }
+    }
+}

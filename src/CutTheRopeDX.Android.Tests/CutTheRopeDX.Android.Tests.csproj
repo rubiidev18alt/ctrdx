@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <OutputType>Exe</OutputType>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="xunit.v3" />
+    <ProjectReference Include="../CutTheRopeDX.Core/CutTheRopeDX.Core.csproj" />
+  </ItemGroup>
+
+  <!-- These helpers intentionally have no Android API dependencies. Link them into a
+       headless test host, as the browser contracts are tested, rather than requiring an
+       emulator to verify pointer identity, fixed-step timing and path containment. -->
+  <ItemGroup>
+    <Compile Include="../CutTheRopeDX.Android/Android/AndroidTouchInput.cs"
+             Link="Android/AndroidTouchInput.cs" />
+    <Compile Include="../CutTheRopeDX.Android/Android/AndroidFrameClock.cs"
+             Link="Android/AndroidFrameClock.cs" />
+    <Compile Include="../CutTheRopeDX.Android/Android/AndroidContentPath.cs"
+             Link="Android/AndroidContentPath.cs" />
+  </ItemGroup>
+</Project>

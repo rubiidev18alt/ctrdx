@@ -1,0 +1,188 @@
+name: PR Code Quality
+
+# Also runs on main so the caches the PR runs restore from exist there: a PR can read main's
+# caches but never save one that another PR could use.
+on:
+    push:
+        branches: [main]
+        paths: &quality-paths
+            - "**/*.cs"
+            - "**/*.csproj"
+            - "**/*.props"
+            - "**/*.targets"
+            - "**/*.slnx"
+            - "global.json"
+            - "nuget.config"
+            - ".github/workflows/pr-quality.yml"
+            - ".github/actions/**"
+            # The headless suite sizes sprites from the checked-in image manifest, and the
+            # packaging and web-content scripts are covered by their own tests. A change to
+            # either that matched nothing above used to reach main without being built at all.
+            - "content/**"
+            - "scripts/**"
+            - "distribution/**"
+            # The page decides which of the two published runtimes it can run, and that
+            # decision lives entirely in these files.
+            - "src/CutTheRopeDX.Browser/wwwroot/**"
+            - "src/CutTheRopeDX.Android/**"
+    pull_request:
+        branches: [main]
+        paths: *quality-paths
+
+permissions:
+    contents: read
+    pull-requests: read
+
+jobs:
+    # The trigger paths above also wake this workflow for Python and JavaScript changes, which
+    # the .NET job has no business spending minutes on. It still runs for content/ (the tests
+    # read the maps, locales and image manifest), for the icons the browser project links from
+    # distribution/, and for changes to this workflow or the shared actions.
+    changes:
+        runs-on: ubuntu-latest
+        outputs:
+            dotnet: ${{ steps.filter.outputs.dotnet }}
+        steps:
+            - id: filter
+              env:
+                  GH_TOKEN: ${{ github.token }}
+                  GH_REPO: ${{ github.repository }}
+                  EVENT: ${{ github.event_name }}
+                  PR: ${{ github.event.pull_request.number }}
+                  BEFORE: ${{ github.event.before }}
+                  AFTER: ${{ github.sha }}
+              run: |
+                  if [ "$EVENT" = pull_request ]; then
+                      files=$(gh api "repos/$GH_REPO/pulls/$PR/files" --paginate --jq '.[].filename')
+                  elif [ -n "$BEFORE" ] && [ "$BEFORE" != 0000000000000000000000000000000000000000 ]; then
+                      files=$(gh api "repos/$GH_REPO/compare/$BEFORE...$AFTER" --jq '.files[].filename')
+                  else
+                      # A new branch has no "before" to compare with; build rather than guess.
+                      echo "dotnet=true" >> "$GITHUB_OUTPUT"
+                      exit 0
+                  fi
+                  pattern='^(.*\.(cs|csproj|props|targets|slnx)|global\.json|nuget\.config|content/.*|distribution/icons/.*|src/CutTheRopeDX\.Android/.*|\.github/actions/.*|\.github/workflows/pr-quality\.yml)$'
+                  if printf '%s\n' "$files" | grep -Eq "$pattern"; then
+                      echo "dotnet=true" >> "$GITHUB_OUTPUT"
+                  else
+                      echo "dotnet=false" >> "$GITHUB_OUTPUT"
+                      echo "No C#, project or content changes; skipping the .NET job."
+                  fi
+
+    code-quality:
+        needs: changes
+        # Runs if the filter failed too, so a broken check never silently skips the build.
+        if: ${{ !cancelled() && needs.changes.outputs.dotnet != 'false' }}
+        runs-on: ubuntu-latest
+
+        steps:
+            - name: Checkout
+              uses: actions/checkout@v7
+
+            - uses: ./.github/actions/setup-dotnet
+
+            # The solution-wide build includes browser and Android heads, which cannot
+            # restore or build without their corresponding workloads.
+            - name: Install WebAssembly and Android workloads
+              run: dotnet workload install wasm-tools android
+
+            - name: Restore dependencies
+              run: dotnet restore
+
+            - name: Check formatting
+              run: dotnet format --verify-no-changes --verbosity diagnostic
+
+            - name: Build
+              run: dotnet build --no-restore -c Release -p:BuildContent=false -p:DeployContent=false
+
+            - name: Test
+              run: dotnet test --solution CutTheRopeDX.slnx --no-build -c Release
+
+            # Package a tiny synthetic content tree to exercise the Android asset targets on
+            # every PR without converting or uploading the proprietary game payload. This is
+            # deliberately only a packaging check; the helper and Core tests test behavior.
+            - name: Create Android package fixtures
+              run: |
+                  python3 - <<'PY'
+                  from pathlib import Path
+                  root = Path("src/CutTheRopeDX.Android/Assets/content")
+                  for name in ("tier0.json", "images/probe.webp", "sounds/probe.ogg", "video_hd/probe.webm"):
+                      path = root / name
+                      path.parent.mkdir(parents=True, exist_ok=True)
+                      path.write_bytes(b"CTRDX Android package smoke fixture")
+                  PY
+
+            - name: Publish Android package smoke test
+              run: >-
+                  dotnet publish src/CutTheRopeDX.Android/CutTheRopeDX.Android.csproj
+                  -c Release -f net10.0-android -r android-arm64
+                  -p:BuildContent=false -p:DeployContent=false
+                  -p:DeployAndroidContent=true -p:AndroidSignPackage=false
+
+            - name: Check Android asset packaging
+              run: |
+                  python3 - <<'PY'
+                  from pathlib import Path
+                  import zipfile
+                  root = Path("src/CutTheRopeDX.Android/bin/Release/net10.0-android/android-arm64")
+                  apks = sorted(root.rglob("*.apk"))
+                  assert apks, f"No APK produced under {root}"
+                  expected = {
+                      "assets/content/tier0.json",
+                      "assets/content/images/probe.webp",
+                      "assets/content/sounds/probe.ogg",
+                      "assets/content/video_hd/probe.webm",
+                  }
+                  for apk in apks:
+                      with zipfile.ZipFile(apk) as package:
+                          names = set(package.namelist())
+                          missing = expected - names
+                          assert not missing, f"{apk}: missing {sorted(missing)}"
+                          for name in expected:
+                              if name.endswith((".ogg", ".webm")):
+                                  info = package.getinfo(name)
+                                  assert info.compress_type == zipfile.ZIP_STORED, (
+                                      f"{apk}: {name} is deflated; AssetManager.OpenFd would fail")
+                      print(f"Verified {apk}")
+                  PY
+
+    # The release and web-content scripts carry their own tests - the ANGLE checksum
+    # verification, the refusal of an incomplete archive, and the directory the game looks in
+    # for those libraries among them. Nothing ran them, so they documented that behaviour
+    # rather than holding it.
+    python-quality:
+        runs-on: ubuntu-latest
+
+        steps:
+            - name: Checkout
+              uses: actions/checkout@v7
+
+            - name: Setup Python
+              uses: actions/setup-python@v7
+              with:
+                  python-version: "3.14"
+                  cache: pip
+                  cache-dependency-path: scripts/requirements-dev.txt
+
+            - name: Install dependencies
+              run: pip install -r scripts/requirements-dev.txt
+
+            - name: Test
+              run: python -m pytest scripts/tests distribution/tests -q
+
+    # The runtime choice, the event writer and the isolation bootstrap are JavaScript, and
+    # they run before any managed code exists to be tested.
+    javascript-quality:
+        runs-on: ubuntu-latest
+
+        steps:
+            - name: Checkout
+              uses: actions/checkout@v7
+
+            - name: Setup Node
+              uses: actions/setup-node@v7
+              with:
+                  node-version: "24"
+
+            - name: Test
+              run: node --test scripts/tests/test_browser_fallback.mjs

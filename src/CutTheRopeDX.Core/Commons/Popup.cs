@@ -1,0 +1,229 @@
+using CutTheRopeDX.Framework;
+using CutTheRopeDX.Framework.Core;
+using CutTheRopeDX.Framework.Platform;
+using CutTheRopeDX.Framework.Visual;
+
+namespace CutTheRopeDX.Commons
+{
+    /// <summary>
+    /// Represents a modal popup dialog with animated show/hide effects and an optional scrollable content area.
+    /// </summary>
+    internal sealed class Popup : BaseElement, ITimelineDelegate
+    {
+        /// <summary>
+        /// Initializes a popup with default show/hide timelines and a centered content root.
+        /// </summary>
+        public Popup()
+        {
+            // The design box, centered in the popup. Everything a popup is made of is positioned
+            // in that box's own coordinates, so hanging it all from a box of exactly that size
+            // means one element - this one - carries the whole popup to the middle of whatever the
+            // viewport is, and every child's own rectangle moves with it. Moving the drawing alone
+            // would leave those rectangles where they were, and a button is pressed by its
+            // rectangle.
+            ContentRoot = new PopupContent
+            {
+                width = (int)ViewportLayout.DesignWidth,
+                height = (int)ViewportLayout.DesignHeight,
+                anchor = CENTER,
+                parentAnchor = CENTER
+            };
+
+            // Timeline 0: Show animation - bounce effect (scale 0 → 1.1 → 0.9 → 1)
+            Timeline timeline = new Timeline().InitWithMaxKeyFramesOnTrack(4);
+            timeline.AddKeyFrame(KeyFrame.MakeScale(0, 0, KeyFrame.TransitionType.FRAME_TRANSITION_LINEAR, 0));
+            timeline.AddKeyFrame(KeyFrame.MakeScale(1.1f, 1.1f, KeyFrame.TransitionType.FRAME_TRANSITION_LINEAR, 0.3f));
+            timeline.AddKeyFrame(KeyFrame.MakeScale(0.9f, 0.9f, KeyFrame.TransitionType.FRAME_TRANSITION_LINEAR, 0.1f));
+            timeline.AddKeyFrame(KeyFrame.MakeScale(1, 1, KeyFrame.TransitionType.FRAME_TRANSITION_LINEAR, 0.2f));
+            _ = AddTimeline(timeline);
+            // Timeline 1: Hide animation - shrink to zero (scale 1 → 0)
+            timeline = new Timeline().InitWithMaxKeyFramesOnTrack(2);
+            timeline.AddKeyFrame(KeyFrame.MakeScale(1, 1, KeyFrame.TransitionType.FRAME_TRANSITION_LINEAR, 0));
+            timeline.AddKeyFrame(KeyFrame.MakeScale(0, 0, KeyFrame.TransitionType.FRAME_TRANSITION_LINEAR, 0.3f));
+            width = (int)VisibleBounds.w;
+            height = (int)VisibleBounds.h;
+            _ = AddTimeline(timeline);
+            timeline.delegateTimelineDelegate = this;
+
+            _ = AddChild(ContentRoot);
+        }
+
+        /// <inheritdoc />
+        public void TimelinereachedKeyFramewithIndex(Timeline t, KeyFrame k, int i)
+        {
+        }
+
+        /// <inheritdoc />
+        public void TimelineFinished(Timeline t)
+        {
+            View view = (View)parent;
+            view?.RemoveChild(this);
+        }
+
+        /// <summary>
+        /// Shows the popup with a bounce animation. Text elements will fade in after the popup appears.
+        /// </summary>
+        public void ShowPopup()
+        {
+            Application.SharedRootController().DeactivateAllButtons();
+
+            // A popup centers itself by half its own width, so it has to be the size of the
+            // viewport it is about to appear over. Built once and shown later, it would otherwise
+            // center against whatever the viewport was when the scene was created.
+            Resize(VisibleBounds);
+            isShow = true;
+            PlayTimeline(0); // Play show animation
+        }
+
+        /// <inheritdoc />
+        public override void Relayout(Rectangle visible)
+        {
+            Resize(visible);
+            base.Relayout(visible);
+        }
+
+        /// <summary>
+        /// Sizes the popup and its content root to a viewport.
+        /// </summary>
+        /// <remarks>
+        /// The region is passed in rather than read from the published viewport, so a layout pass
+        /// sizes the popup against the same rectangle it is sizing everything else against. A
+        /// popup that consulted the global instead would be correct only while the two agreed,
+        /// which is exactly the case where the parameter would not have been needed.
+        /// </remarks>
+        /// <param name="visible">The logical region the viewport exposes.</param>
+        public void Resize(Rectangle visible)
+        {
+            // Only the popup itself follows the viewport; the design box inside it keeps its own
+            // size and is centered on whatever that comes to.
+            width = (int)visible.w;
+            height = (int)visible.h;
+        }
+
+        /// <summary>
+        /// Hides the popup. Text elements fade out first, then the popup shrinks away.
+        /// </summary>
+        public void HidePopup()
+        {
+            isShow = false;
+            PlayTimeline(1);
+        }
+
+        /// <summary>
+        /// Gets the root element that hosts popup content (background, text, buttons, etc.).
+        /// </summary>
+        public BaseElement ContentRoot { get; }
+
+        /// <summary>
+        /// The box a popup is composed in. Everything put in it is anchored to its top left
+        /// corner, in the design box's own coordinates, which is what the popup's pieces are
+        /// positioned in.
+        /// </summary>
+        /// <remarks>
+        /// Anchored here rather than at each place a piece is added, so a piece added without a
+        /// thought for it still moves with the box. Absolute placement - what a child gets by
+        /// default - would leave the piece where the design box would put it on a screen of the
+        /// design's own shape, and leave the rectangle it is pressed by there too.
+        /// </remarks>
+        private sealed class PopupContent : BaseElement
+        {
+            /// <inheritdoc />
+            public override int AddChildwithID(BaseElement c, int i)
+            {
+                int childId = base.AddChildwithID(c, i);
+                c.parentAnchor = TOP | LEFT;
+                return childId;
+            }
+        }
+
+        /// <summary>
+        /// Applies a uniform or non-uniform scale to the popup content root.
+        /// </summary>
+        /// <param name="sx">Horizontal scale factor.</param>
+        /// <param name="sy">Vertical scale factor.</param>
+        public void SetContentScale(float sx, float sy)
+        {
+            ContentRoot.scaleX = sx;
+            ContentRoot.scaleY = sy;
+        }
+
+        /// <summary>
+        /// Registers a scrollable container to receive mouse-wheel scrolling while the popup is shown.
+        /// </summary>
+        /// <param name="container">Scrollable container hosting long text or content.</param>
+        public void RegisterScrollableContainer(ScrollableContainer container)
+        {
+            scrollContainer = container;
+        }
+
+        /// <summary>
+        /// Forwards mouse wheel input to the registered scroll container, if present.
+        /// </summary>
+        /// <param name="scrollDelta">Mouse wheel delta.</param>
+        /// <returns><see langword="true" /> if the popup consumed the scroll input; otherwise <see langword="false" />.</returns>
+        public bool HandleMouseWheel(int scrollDelta)
+        {
+            if (!isShow || scrollContainer == null)
+            {
+                return false;
+            }
+
+            scrollContainer.HandleMouseWheel(scrollDelta);
+            return true;
+        }
+
+        /// <inheritdoc />
+        public override bool OnTouchDownXY(float tx, float ty)
+        {
+            if (isShow)
+            {
+                _ = base.OnTouchDownXY(tx, ty);
+            }
+            return true;
+        }
+
+        /// <inheritdoc />
+        public override bool OnTouchUpXY(float tx, float ty)
+        {
+            if (isShow)
+            {
+                _ = base.OnTouchUpXY(tx, ty);
+            }
+            return true;
+        }
+
+        /// <inheritdoc />
+        public override bool OnTouchMoveXY(float tx, float ty)
+        {
+            if (isShow)
+            {
+                _ = base.OnTouchMoveXY(tx, ty);
+            }
+            return true;
+        }
+
+        /// <inheritdoc />
+        public override void Draw()
+        {
+            Renderer.Enable(Renderer.GL_BLEND);
+            Renderer.Disable(Renderer.GL_TEXTURE_2D);
+            Renderer.SetBlendFunc(BlendingFactor.GLONE, BlendingFactor.GLONEMINUSSRCALPHA);
+            DrawHelper.DrawSolidRectWOBorder(0f, 0f, VisibleBounds.w, VisibleBounds.h, RGBAColor.MakeRGBA(0, 0, 0, 0.5f));
+            Renderer.Enable(Renderer.GL_TEXTURE_2D);
+            Renderer.SetColor(Color.White);
+            PreDraw();
+            PostDraw();
+            Renderer.Disable(Renderer.GL_BLEND);
+        }
+
+        /// <summary>
+        /// Indicates whether the popup is currently shown and should accept input.
+        /// </summary>
+        private bool isShow;
+
+        /// <summary>
+        /// The optional scroll container that receives mouse-wheel forwarding while the popup is visible.
+        /// </summary>
+        private ScrollableContainer scrollContainer;
+    }
+}

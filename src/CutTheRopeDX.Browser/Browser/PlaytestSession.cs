@@ -1,0 +1,282 @@
+using System;
+using System.IO;
+using System.Reflection;
+using System.Threading.Tasks;
+
+using CutTheRopeDX.Framework.Diagnostics;
+using CutTheRopeDX.Framework.Platform;
+using CutTheRopeDX.GameMain;
+
+using Microsoft.Extensions.Logging;
+
+namespace CutTheRopeDX.Browser
+{
+    /// <summary>
+    /// Runs the browser end of a playtest: announces the session, receives levels from the editor,
+    /// and puts them where Core already knows how to find them.
+    /// </summary>
+    /// <remarks>
+    /// The desktop head is handed a level by path on the command line and watches that path. A tab
+    /// has neither, so this stands in for both: the level arrives from localStorage, where the editor
+    /// left it before opening the tab, or over the BroadcastChannel, and is
+    /// written to <see cref="LevelPath"/> in the WASM in-memory filesystem, which
+    /// <see cref="CustomLevelSession"/> is then activated against. From that point Core cannot tell
+    /// the two heads apart, and the reload path - debounce, resource scan, instant-versus-full
+    /// decision - is literally the same code.
+    /// </remarks>
+    internal static class PlaytestSession
+    {
+        /// <summary>Directory holding the session's level file.</summary>
+        private const string LevelDirectory = "/playtest";
+
+        /// <summary>File name of the session's level file.</summary>
+        private const string LevelFileName = "level.xml";
+
+        /// <summary>How long to wait for the editor to answer the announcement before giving up.</summary>
+        /// <remarks>
+        /// Matches the editor's own grace period. Past it the editor has already written this
+        /// session off and dropped the level, so waiting any longer could not be answered.
+        /// </remarks>
+        private static readonly TimeSpan LevelTimeout = TimeSpan.FromSeconds(15);
+
+        /// <summary>How often to check for the first level while waiting.</summary>
+        private static readonly TimeSpan PollInterval = TimeSpan.FromMilliseconds(100);
+
+        /// <summary>How often the announcement is repeated while no level has arrived.</summary>
+        /// <remarks>
+        /// Opening the game sends the editor's tab to the background, and a mobile browser throttles
+        /// or suspends background tabs. A single announcement can sit unanswered until the editor
+        /// runs again, so it is repeated rather than trusted to be heard the first time.
+        /// </remarks>
+        private static readonly TimeSpan AnnounceInterval = TimeSpan.FromSeconds(1);
+
+        private static PushedFileWatcherFactory _watchers;
+        private static string _nonce = "";
+
+        /// <summary>The level most recently written to <see cref="LevelPath"/>.</summary>
+        private static string _lastLevel;
+
+        /// <summary>
+        /// Announcements the editor may still answer. Each is answered with the session's level, so
+        /// that many copies of the last level can arrive after the first and must not restart it.
+        /// </summary>
+        private static int _unansweredAnnouncements;
+
+        /// <summary>Whether this page is running a playtest.</summary>
+        public static bool IsActive { get; private set; }
+
+        /// <summary>Full path of the level file inside the in-memory filesystem.</summary>
+        public static string LevelPath => Path.Combine(LevelDirectory, LevelFileName);
+
+        /// <summary>
+        /// Announces the session and waits for the editor's first level.
+        /// </summary>
+        /// <returns>
+        /// <see langword="true"/> when a level arrived and <see cref="CustomLevelSession"/> was
+        /// activated; <see langword="false"/> for a normal launch, or when no editor answered.
+        /// </returns>
+        /// <remarks>
+        /// The announcement goes out before the caller starts loading the content bundle, so the
+        /// transfer overlaps a ~56 MB download instead of following it. A launch with no editor
+        /// listening - a bookmarked playtest URL, or an editor that has since been closed - times
+        /// out and falls through to the normal game rather than hanging on a loading screen.
+        /// </remarks>
+        public static async Task<bool> BeginAsync()
+        {
+            await PlaytestInterop.ImportAsync();
+
+            ILogger logger = Log.For(LogCategories.Playtest);
+            _nonce = PlaytestInterop.NonceFromQuery();
+            if (string.IsNullOrEmpty(_nonce))
+            {
+                PlaytestLog.SessionInactive(logger, "the page was opened without a playtest nonce");
+                return false;
+            }
+
+            string handshake = PlaytestHandshake.FormatLine(ResolveVersion());
+            PlaytestInterop.Open();
+            string ready = PlaytestChannelMessage.FormatReady(_nonce, handshake);
+            PlaytestInterop.Post(ready);
+            _unansweredAnnouncements = 1;
+            PlaytestLog.Handshake(logger, handshake);
+
+            // A level the editor stored before opening this tab needs nothing more from it, which
+            // matters because the editor may have been suspended or discarded since. The
+            // announcement still went out, so a running editor learns the session is live and its
+            // answer is absorbed as a copy.
+            bool stored = TryTakeStoredLevel();
+
+            DateTime deadline = DateTime.UtcNow + LevelTimeout;
+            DateTime nextAnnouncement = DateTime.UtcNow + AnnounceInterval;
+            while (DateTime.UtcNow < deadline)
+            {
+                if (!stored && _unansweredAnnouncements > 0 && DateTime.UtcNow >= nextAnnouncement)
+                {
+                    PlaytestInterop.Post(ready);
+                    _unansweredAnnouncements++;
+                    nextAnnouncement = DateTime.UtcNow + AnnounceInterval;
+                }
+
+                if (stored || TryTakeLevel())
+                {
+                    _watchers = new PushedFileWatcherFactory();
+                    PlatformServices.FileWatchers = _watchers;
+                    CustomLevelSession.Activate(LevelPath);
+                    IsActive = true;
+                    PlaytestLog.SessionActive(logger, LevelPath);
+
+                    // Stands in for the stderr pipe the desktop editor reads. Installed only for a
+                    // playtest, so a normal game's console output is untouched.
+                    Console.SetError(new PlaytestErrorWriter(Console.Error));
+                    return true;
+                }
+
+                await Task.Delay(PollInterval);
+            }
+
+            PlaytestLog.SessionInactive(logger, "no editor answered; starting the normal game");
+            return false;
+        }
+
+        /// <summary>
+        /// Delivers any levels that arrived since the last frame. Called once per animation frame.
+        /// </summary>
+        /// <remarks>
+        /// Writing the file and reporting the change are separate on purpose: the report goes
+        /// through the same watcher seam a desktop file event does, so Core debounces it and picks
+        /// the same reload strategy on both heads.
+        /// </remarks>
+        public static void Pump()
+        {
+            if (!IsActive)
+            {
+                return;
+            }
+
+            if (TryTakeLevel())
+            {
+                _watchers.NotifyChanged(LevelDirectory, LevelFileName);
+            }
+        }
+
+        /// <summary>Tells the editor about a level this build could not load.</summary>
+        /// <param name="message">Human-readable failure reason.</param>
+        public static void ReportError(string message)
+        {
+            if (IsActive)
+            {
+                PlaytestInterop.Post(PlaytestChannelMessage.FormatError(_nonce, message));
+            }
+        }
+
+        /// <summary>Says goodbye and closes the playtest window.</summary>
+        public static void Close()
+        {
+            if (!IsActive)
+            {
+                return;
+            }
+
+            PlaytestInterop.Post(PlaytestChannelMessage.FormatBye(_nonce));
+            ILogger logger = Log.For(LogCategories.Playtest);
+            PlaytestLog.SessionClosed(logger);
+            PlaytestInterop.CloseWindow();
+        }
+
+        /// <summary>
+        /// Drains the channel and writes the newest level for this session, if one arrived.
+        /// </summary>
+        /// <returns><see langword="true"/> when the level file was rewritten.</returns>
+        /// <remarks>
+        /// Only the last level in a batch is written. Two levels in one frame means the user pressed
+        /// Play twice faster than a frame, and the older one is already stale.
+        /// <para>
+        /// A copy of the last level is an answer to a repeated announcement, not a Play, as long as
+        /// announcements remain unanswered. Any other level ends that: the channel keeps order, so
+        /// every answer the editor was going to send has already arrived ahead of it.
+        /// </para>
+        /// </remarks>
+        private static bool TryTakeLevel()
+        {
+            string newest = null;
+            foreach (string json in PlaytestInterop.Drain())
+            {
+                if (!PlaytestChannelMessage.TryParse(json, out PlaytestMessageKind kind, out string nonce, out string payload)
+                    || kind != PlaytestMessageKind.Level
+                    || !string.Equals(nonce, _nonce, StringComparison.Ordinal))
+                {
+                    continue;
+                }
+
+                string previous = newest ?? _lastLevel;
+                if (previous == null)
+                {
+                    _unansweredAnnouncements--;
+                }
+                else if (_unansweredAnnouncements > 0 && string.Equals(payload, previous, StringComparison.Ordinal))
+                {
+                    _unansweredAnnouncements--;
+                    continue;
+                }
+                else
+                {
+                    _unansweredAnnouncements = 0;
+                }
+
+                newest = payload;
+            }
+
+            if (newest == null)
+            {
+                return false;
+            }
+
+            WriteLevel(newest);
+            return true;
+        }
+
+        /// <summary>Writes the level the editor stored for this session before opening the tab.</summary>
+        /// <returns><see langword="true"/> when a stored level was found and written.</returns>
+        /// <remarks>
+        /// Not an answer to an announcement, so it leaves <see cref="_unansweredAnnouncements"/>
+        /// alone: the editor's reply, when it comes, is a copy of this level.
+        /// </remarks>
+        private static bool TryTakeStoredLevel()
+        {
+            if (!PlaytestChannelMessage.TryParse(PlaytestInterop.StoredLevel(_nonce), out PlaytestMessageKind kind, out string nonce, out string payload)
+                || kind != PlaytestMessageKind.Level
+                || !string.Equals(nonce, _nonce, StringComparison.Ordinal))
+            {
+                return false;
+            }
+
+            WriteLevel(payload);
+            return true;
+        }
+
+        /// <summary>Replaces the session's level file.</summary>
+        /// <param name="level">The level document.</param>
+        private static void WriteLevel(string level)
+        {
+            // Written to a scratch file and moved into place, so a reader never sees a half-written
+            // document. Same-directory moves are atomic, and this holds on the WASM filesystem too.
+            _ = Directory.CreateDirectory(LevelDirectory);
+            string scratch = LevelPath + ".tmp";
+            File.WriteAllText(scratch, level);
+            File.Move(scratch, LevelPath, true);
+            _lastLevel = level;
+            ILogger logger = Log.For(LogCategories.Playtest);
+            PlaytestLog.LevelReceived(logger, level.Length);
+        }
+
+        /// <summary>Resolves this build's version for the handshake.</summary>
+        /// <returns>The informational version, the assembly version, or an empty string.</returns>
+        private static string ResolveVersion()
+        {
+            Assembly assembly = typeof(PlaytestSession).Assembly;
+            return assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion
+                ?? assembly.GetName().Version?.ToString()
+                ?? "";
+        }
+    }
+}

@@ -1,0 +1,142 @@
+"""Font subsetting to the characters the game can actually render.
+
+The full typefaces total 13.4 MB, most of it CJK coverage the game never renders.
+Subsetting to the characters actually present in the locale files takes that to ~678 KB.
+
+Output keeps each source file's own name and extension. Subsetting preserves the outline
+flavor -- a subsetted .otf is still CFF -- so renaming everything to .ttf only made the
+file describe itself wrongly, and the game's shared font loader had to encode that rename
+to find anything.
+
+Output stays sfnt rather than WOFF2. WOFF2 would halve it again, but SkiaSharp's
+WebAssembly build (4.151.1) compiles FreeType without FT_CONFIG_OPTION_USE_BROTLI -- its
+archive has zero woff2 and zero Brotli symbols -- so SKTypeface.FromData cannot decode it.
+Setting font.flavor = "woff2" here is the one-line change if that ever returns.
+"""
+
+from __future__ import annotations
+
+import functools
+import hashlib
+import io
+import json
+import logging
+from collections.abc import Iterator, Sequence
+from pathlib import Path
+
+from fontTools.subset import Options, Subsetter
+from fontTools.ttLib import TTFont
+
+from . import pipeline, progress
+
+SETTINGS = "sfnt:subset:v2"
+
+# fontTools warns once per table it has no subsetter for (meta, FFTM, webf). Dropping
+# them is the intended outcome -- none holds glyph or layout data the game reads -- so
+# the warnings are noise that only obscures the real output.
+logging.getLogger("fontTools.subset").setLevel(logging.ERROR)
+
+#: Font file -> the locale codes whose text it must cover. Mirrors
+#: CutTheRopeDX.Core/GameMain/Resources.cs FontConfig.GetFontFile.
+FONT_LANGUAGES: dict[str, tuple[str, ...]] = {
+    "KNMaiyuan-Regular.ttf": ("zh", "zh_tw"),
+    "MPLUSRounded1c-Medium.ttf": ("ja",),
+    "Cafe24DongdongRegular.otf": ("ko",),
+    "PlaypenSans-SemiBold.ttf": ("ru",),
+    "gooddog_new-webfont.ttf": (
+        "en",
+        "ca",
+        "de",
+        "es",
+        "fr",
+        "it",
+        "nl",
+        "pt_br",
+    ),
+}
+
+
+def _walk(value: object, into: set[str]) -> None:
+    if isinstance(value, str):
+        into.update(value)
+    elif isinstance(value, dict):
+        for key, item in value.items():
+            _walk(key, into)
+            _walk(item, into)
+    elif isinstance(value, list):
+        for item in value:
+            _walk(item, into)
+
+
+def collect_charset(locales_dir: Path, languages: Sequence[str]) -> set[str]:
+    """Returns every character the given locales can render, plus printable ASCII.
+
+    ASCII is unconditional because scores, level numbers and other generated text are
+    never present in the locale files.
+    """
+    charset = {chr(code) for code in range(0x20, 0x7F)}
+    for language in languages:
+        path = locales_dir / f"{language}.json"
+        if not path.exists():
+            continue
+        _walk(json.loads(path.read_text(encoding="utf-8")), charset)
+    return charset
+
+
+def subset_font(source: Path, charset: set[str]) -> bytes:
+    """Subsets a typeface to `charset` and returns it as TTF."""
+    font = TTFont(source)
+    options = Options()
+    options.layout_features = ["*"]
+    options.notdef_outline = True
+    subsetter = Subsetter(options=options)
+    subsetter.populate(text="".join(sorted(charset)))
+    subsetter.subset(font)
+
+    buffer = io.BytesIO()
+    font.save(buffer)
+    return buffer.getvalue()
+
+
+def _settings_for_charset(charset: set[str]) -> str:
+    encoded = "".join(sorted(charset)).encode("utf-8")
+    digest = hashlib.sha256(encoded).hexdigest()
+    return f"{SETTINGS}:{len(charset)}:{digest}"
+
+
+def write_subset(job: pipeline.Job, locales_dir: Path) -> None:
+    """Subsets one job's typeface. Runs in a pool worker."""
+    charset = collect_charset(locales_dir, FONT_LANGUAGES[job.source.name])
+    job.out_path.write_bytes(subset_font(job.source, charset))
+
+
+def _jobs(content_root: Path, out_root: Path) -> Iterator[pipeline.Job]:
+    locales_dir = content_root / "locales"
+    for font_file, languages in sorted(FONT_LANGUAGES.items()):
+        source = content_root / "fonts" / font_file
+        if not source.exists():
+            continue
+        relative = Path("fonts") / font_file
+        charset = collect_charset(locales_dir, languages)
+        yield pipeline.Job(
+            source,
+            relative.as_posix(),
+            out_root / relative,
+            _settings_for_charset(charset),
+        )
+
+
+def convert_fonts(
+    content_root: Path,
+    out_root: Path,
+    entries: dict[str, str],
+    report: progress.Reporter = progress.SILENT,
+) -> tuple[int, int]:
+    """Subsets every mapped font, skipping unchanged outputs."""
+    return pipeline.run_stage(
+        "fonts",
+        _jobs(content_root, out_root),
+        functools.partial(write_subset, locales_dir=content_root / "locales"),
+        entries,
+        report,
+    )

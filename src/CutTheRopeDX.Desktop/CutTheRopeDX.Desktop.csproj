@@ -1,0 +1,203 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <RootNamespace>CutTheRopeDX</RootNamespace>
+    <AssemblyName>CutTheRope-DX</AssemblyName>
+
+    <!-- Default: cross-platform -->
+    <TargetFrameworks>net10.0</TargetFrameworks>
+    <!-- macOS: add net10.0-macos for AVFoundation.
+         Set ExcludeMacOSTarget=true to drop it (used by the test project, which
+         only needs the portable target and must not require the macos workload). -->
+    <TargetFrameworks Condition="$([MSBuild]::IsOsPlatform('OSX')) AND '$(ExcludeMacOSTarget)' != 'true'">net10.0;net10.0-macos</TargetFrameworks>
+
+    <AllowUnsafeBlocks>True</AllowUnsafeBlocks>
+    <WindowsDistributionIcon>../../distribution/icons/CutTheRopeDXIcon.ico</WindowsDistributionIcon>
+    <ApplicationIcon Condition="$([MSBuild]::IsOsPlatform('Windows'))">$(WindowsDistributionIcon)</ApplicationIcon>
+    <VersionPrefix>1.0.0</VersionPrefix>
+    <VersionSuffix>dirty</VersionSuffix>
+    <Company>ZeptoLab</Company>
+    <Product>Cut the Rope DX</Product>
+    <AssemblyTitle>Cut the Rope DX</AssemblyTitle>
+    <Description>Cut the Rope DX, a fan-made enhancement of the PC version of Cut the Rope.</Description>
+    <Copyright>Copyright © 2012</Copyright>
+    <NeutralLanguage>en-US</NeutralLanguage>
+    <IsAotCompatible>true</IsAotCompatible>
+    <TieredCompilation>false</TieredCompilation>
+    <IncludeSourceRevisionInInformationalVersion Condition="'$(VersionSuffix)' != ''">true</IncludeSourceRevisionInInformationalVersion>
+    <IncludeSourceRevisionInInformationalVersion Condition="'$(VersionSuffix)' == ''">false</IncludeSourceRevisionInInformationalVersion>
+
+  </PropertyGroup>
+
+  <!-- Output type -->
+  <PropertyGroup Condition="'$(Configuration)' == 'Debug'">
+    <OutputType>Exe</OutputType>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(Configuration)' == 'Release' AND $([MSBuild]::IsOsPlatform('Windows'))">
+    <OutputType>WinExe</OutputType>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(Configuration)' == 'Release' AND !$([MSBuild]::IsOsPlatform('Windows'))">
+    <OutputType>Exe</OutputType>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(RuntimeIdentifier)' != ''">
+    <PublishSingleFile>true</PublishSingleFile>
+    <PublishReadyToRun>false</PublishReadyToRun>
+  </PropertyGroup>
+
+  <!-- macOS app bundle doesn't support single-file publishing -->
+  <PropertyGroup Condition="'$(TargetFramework)' == 'net10.0-macos'">
+    <SelfContained>true</SelfContained>
+    <PublishSingleFile>false</PublishSingleFile>
+    <PublishReadyToRun>false</PublishReadyToRun>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(TargetFramework)' == 'net10.0-macos'">
+    <ApplicationId>page.yell0wsuit.cuttherope.dx</ApplicationId>
+    <SupportedOSPlatformVersion>26.0</SupportedOSPlatformVersion>
+    <ApplicationDisplayVersion>$(VersionPrefix)</ApplicationDisplayVersion>
+    <ApplicationDisplayVersion Condition="'$(VersionSuffix)' != ''">$(VersionPrefix)-$(VersionSuffix)</ApplicationDisplayVersion>
+    <ApplicationVersion>$([System.Text.RegularExpressions.Regex]::Match('$(VersionPrefix)', '^[0-9]+(\.[0-9]+)*').Value)</ApplicationVersion>
+  </PropertyGroup>
+
+  <ItemGroup Condition="'$(TargetFramework)' == 'net10.0-macos'">
+    <PartialAppManifest Include="../../distribution/macos/InfoCsproj.plist" />
+  </ItemGroup>
+
+  <ItemGroup Condition="'$(TargetFramework)' == 'net10.0-macos'">
+    <BundleResource Include="../../distribution/icons/CutTheRopeDXIcon.icns">
+      <Link>CutTheRopeDXIcon.icns</Link>
+    </BundleResource>
+    <BundleResource Include="../../distribution/macos/en.lproj/InfoPlist.strings">
+      <Link>en.lproj/InfoPlist.strings</Link>
+    </BundleResource>
+  </ItemGroup>
+
+
+
+
+  <ItemGroup>
+    <ProjectReference Include="../CutTheRopeDX.Core/CutTheRopeDX.Core.csproj" />
+    <ProjectReference Include="../CutTheRopeDX.Desktop.Platform/CutTheRopeDX.Desktop.Platform.csproj" />
+    <ProjectReference Include="../CutTheRopeDX.Rendering.Skia/CutTheRopeDX.Rendering.Skia.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="CutTheRopeDX.Desktop.Tests" />
+  </ItemGroup>
+
+  <ItemGroup Condition="'$(TargetFramework)' == 'net10.0'">
+    <PackageReference Include="FFmpeg.AutoGen" />
+  </ItemGroup>
+
+  <!-- AVFoundation for macOS Tahoe (26) -->
+  <PropertyGroup Condition="'$(TargetFramework)' == 'net10.0-macos'">
+    <DefineConstants>$(DefineConstants);MACOS_AVFOUNDATION</DefineConstants>
+  </PropertyGroup>
+
+  <!-- FFmpeg for cross-platform -->
+  <PropertyGroup Condition="'$(TargetFramework)' == 'net10.0'">
+    <DefineConstants>$(DefineConstants);FFMPEG_BACKEND</DefineConstants>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Include="../../distribution/icons/CutTheRopeDXIcon.bmp">
+      <LogicalName>Icon.bmp</LogicalName>
+    </EmbeddedResource>
+  </ItemGroup>
+
+  <ItemGroup Condition="'$(RuntimeIdentifier)' != '' AND $(RuntimeIdentifier.StartsWith('osx'))">
+    <None Include="../../distribution/icons/CutTheRopeDXIcon.icns">
+      <Link>Resources/CutTheRopeDXIcon.icns</Link>
+      <CopyToPublishDirectory>Always</CopyToPublishDirectory>
+    </None>
+  </ItemGroup>
+
+  <!--
+    net10.0-macos (the AVFoundation .app bundle) is built by the Apple SDK's own bundler,
+    which needs a BundleResource item (not None) to place a file in the bundle at all - a
+    plain None here silently produces "will not be copied to the app bundle" and ships
+    without it. Every other TFM keeps the ordinary CopyToOutputDirectory/CopyToPublishDirectory
+    behavior, which already places it next to the executable.
+  -->
+
+
+  <!--
+    macOS: codesign dylibs and the app bundle after build.
+    This must be done to avoid app crashes when opening (thanks macOS).
+
+    Skipped for the per-RID inner builds of a universal build, which the macOS SDK marks with
+    _IsMultiRidBuild. Those slices are merged afterwards, and MergeAppBundles refuses a merge
+    when a file differs between bundles — signing each slice first produces exactly that, since
+    a signature over arm64 binaries cannot match one over x64.
+
+    A RID-less build leaves the per-RID slices in the output rather than a merged bundle, so
+    there is nothing further here for this target to sign. Shipping builds are unaffected
+    either way: distribution/bundle_macos.sh publishes a single RID and assembles its own app.
+  -->
+  <Target Name="CodesignMacOSBundle" AfterTargets="Build" Condition="'$(_IsMultiRidBuild)' != 'true' AND '$(TargetFramework)' == 'net10.0-macos' AND '$(RuntimeIdentifier)' != '' AND $([MSBuild]::IsOsPlatform('OSX'))">
+    <PropertyGroup>
+      <AppBundlePath>$([MSBuild]::NormalizePath($([MSBuild]::EnsureTrailingSlash('$(OutputPath)'))$(AssemblyName).app))</AppBundlePath>
+    </PropertyGroup>
+
+    <Message Text="Codesigning dylibs in $(AppBundlePath)..." Importance="High" />
+
+    <!-- Sign all dylibs - using bash to avoid escaping hell -->
+    <Exec Command="/bin/bash -c &quot;find '$(AppBundlePath)' -name '*.dylib' -print0 | xargs -0 -I {} codesign --force --sign - '{}'&quot;" IgnoreExitCode="false" />
+
+    <!-- Sign the bundle itself -->
+    <Exec Command="codesign --force --sign - &quot;$(AppBundlePath)&quot;" IgnoreExitCode="false" />
+  </Target>
+
+  <!--
+    macOS: bundle exactly one SDL3 and one SDL_mixer.
+
+    The SDL3-CS packages ship each library under several names (libSDL3.dylib beside
+    libSDL3.0.dylib, three names for the mixer) as separate files sharing one install name, so
+    outside a bundle dyld treats them as one image. The Apple SDK gives every bundled dylib an
+    install name of its own and links the executable against all of them, so the app loads SDL3
+    twice: P/Invoke binds libSDL3.dylib while the mixer binds libSDL3.0.dylib. The mixer then
+    works against an SDL nobody initialized, every sound and song fails to load, and the reason
+    is recorded in the copy the game never reads, leaving the logged error blank.
+
+    Keep only the names P/Invoke probes for, then point the mixer at the SDL3 that remains.
+  -->
+  <Target Name="DropDuplicateSdlLibraries" AfterTargets="_ComputePublishLocation" Condition="'$(TargetFramework)' == 'net10.0-macos'">
+    <ItemGroup>
+      <_DuplicateSdlLibrary Include="@(_FileNativeReference)" Condition="$([System.Text.RegularExpressions.Regex]::IsMatch('%(Filename)%(Extension)', '^libSDL3(_mixer)?\.[0-9.]+\.dylib$'))" />
+      <_FileNativeReference Remove="@(_DuplicateSdlLibrary)" />
+    </ItemGroup>
+  </Target>
+
+  <Target Name="LinkMixerToBundledSdl" AfterTargets="_InstallNameTool" Condition="'$(TargetFramework)' == 'net10.0-macos'">
+    <ItemGroup>
+      <_BundledSdl Include="@(_DynamicLibraryToReidentify)" Condition="'%(Filename)%(Extension)' == 'libSDL3.dylib'" />
+      <_BundledSdlMixer Include="@(_DynamicLibraryToReidentify)" Condition="'%(Filename)%(Extension)' == 'libSDL3_mixer.dylib'" />
+    </ItemGroup>
+
+    <Exec Condition="'@(_BundledSdl)' != '' AND '@(_BundledSdlMixer)' != ''" Command="install_name_tool -change @rpath/libSDL3.0.dylib '@(_BundledSdl->'%(DynamicLibraryId)')' '@(_BundledSdlMixer->'%(ReidentifiedPath)')'" />
+  </Target>
+
+  <Target Name="MoveMacOSAppToPublish" AfterTargets="Publish" Condition="'$(TargetFramework)' == 'net10.0-macos' AND '$(RuntimeIdentifier)' != '' AND $([MSBuild]::IsOsPlatform('OSX'))">
+    <PropertyGroup>
+      <AppBundleName>$(AssemblyName).app</AppBundleName>
+      <AppSourcePath>$([MSBuild]::NormalizePath($([MSBuild]::EnsureTrailingSlash('$(OutputPath)'))$(AppBundleName)))</AppSourcePath>
+      <AppPublishPath>$([MSBuild]::NormalizePath($([MSBuild]::EnsureTrailingSlash('$(PublishDir)'))$(AppBundleName)))</AppPublishPath>
+    </PropertyGroup>
+
+    <Message Text="Relocating macOS .app to publish directory" Importance="High" />
+
+    <!-- mv onto an existing .app directory nests the bundle inside it rather
+         than replacing it, so clear the destination first. -->
+    <Exec Condition="Exists('$(AppSourcePath)')" Command="/bin/rm -rf &quot;$(AppPublishPath)&quot; &amp;&amp; /bin/mv &quot;$(AppSourcePath)&quot; &quot;$(AppPublishPath)&quot;" />
+  </Target>
+
+  <Import Project="../../content/Builder/BuildContent.targets" />
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.Logging" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Console" />
+    <PackageReference Include="NReco.Logging.File" />
+  </ItemGroup>
+</Project>

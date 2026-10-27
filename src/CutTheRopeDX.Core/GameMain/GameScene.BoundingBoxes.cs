@@ -1,0 +1,119 @@
+using CutTheRopeDX.Framework;
+using CutTheRopeDX.Framework.Helpers;
+
+namespace CutTheRopeDX.GameMain
+{
+    internal sealed partial class GameScene
+    {
+        /// <summary>
+        /// Selects a bounding box from desktop or phone dimensions depending on the active physics model.
+        /// </summary>
+        /// <param name="desktopX">Desktop bounding box X offset.</param>
+        /// <param name="desktopY">Desktop bounding box Y offset.</param>
+        /// <param name="desktopWidth">Desktop bounding box width.</param>
+        /// <param name="desktopHeight">Desktop bounding box height.</param>
+        /// <param name="phoneX">Phone bounding box X offset (pre-scale).</param>
+        /// <param name="phoneY">Phone bounding box Y offset (pre-scale).</param>
+        /// <param name="phoneWidth">Phone bounding box width (pre-scale).</param>
+        /// <param name="phoneHeight">Phone bounding box height (pre-scale).</param>
+        /// <returns>The selected bounding box rectangle.</returns>
+        private static Rectangle SelectPhysicsBoundingBox(
+            float desktopX,
+            float desktopY,
+            float desktopWidth,
+            float desktopHeight,
+            float phoneX,
+            float phoneY,
+            float phoneWidth,
+            float phoneHeight)
+        {
+            if (!ActivePhysicsConstants.UseMobilePhysicsModel)
+            {
+                return MakeRectangle(desktopX, desktopY, desktopWidth, desktopHeight);
+            }
+
+            float scale = ActivePhysicsConstants.Wp7ToWorldScale;
+            return MakeRectangle(phoneX * scale, phoneY * scale, phoneWidth * scale, phoneHeight * scale);
+        }
+
+        /// <summary>Returns the bounding box for the candy.</summary>
+        /// <returns>The candy bounding box.</returns>
+        internal static Rectangle GetCandyBoundingBox()
+        {
+            return SelectPhysicsBoundingBox(142f, 157f, 112f, 104f, 46f, 49f, 35f, 35f);
+        }
+
+        /// <summary>
+        /// Returns the candy collision box positioned relative to the active sprite's center.
+        /// </summary>
+        /// <remarks>
+        /// Collision metadata was authored inside a mode-specific canonical candy canvas. Candy
+        /// skins are cosmetic, so preserve the selected metadata box's center offset rather than
+        /// copying its absolute X/Y into a potentially different skin canvas.
+        /// </remarks>
+        private static Rectangle GetCandyBoundingBox(GameObject visual)
+        {
+            Rectangle bounds = GetCandyBoundingBox();
+            if (visual == null)
+            {
+                return bounds;
+            }
+
+            float sourceCanvasWidth = 393f;
+            float sourceCanvasHeight = 418f;
+            if (ActivePhysicsConstants.UseMobilePhysicsModel)
+            {
+                float scale = ActivePhysicsConstants.Wp7ToWorldScale;
+                sourceCanvasWidth = 126f * scale;
+                sourceCanvasHeight = 134f * scale;
+            }
+
+            float centerOffsetX = bounds.x + (bounds.w / 2f) - (sourceCanvasWidth / 2f);
+            float centerOffsetY = bounds.y + (bounds.h / 2f) - (sourceCanvasHeight / 2f);
+
+            bounds.x = (visual.width / 2f) + centerOffsetX - (bounds.w / 2f);
+            bounds.y = (visual.height / 2f) + centerOffsetY - (bounds.h / 2f);
+            return bounds;
+        }
+
+        /// <summary>Returns the bounding box for the split candy (after being cut in half).</summary>
+        /// <returns>The split candy bounding box.</returns>
+        private static Rectangle GetSplitCandyBoundingBox()
+        {
+            return SelectPhysicsBoundingBox(155f, 176f, 88f, 76f, 52f, 56f, 23f, 24f);
+        }
+
+        /// <summary>Returns the bounding box for the bubble.</summary>
+        /// <returns>The bubble bounding box.</returns>
+        internal static Rectangle GetBubbleBoundingBox()
+        {
+            return SelectPhysicsBoundingBox(48f, 48f, 152f, 152f, 0f, 0f, 57f, 57f);
+        }
+
+        /// <summary>Returns the bounding box for the snail.</summary>
+        /// <returns>The snail bounding box.</returns>
+        internal static Rectangle GetSnailBoundingBox()
+        {
+            return SelectPhysicsBoundingBox(133f, 171f, 120f, 138f, 43f, 55f, 38f, 44f);
+        }
+
+        /// <summary>Returns the bounding box for the air pump.</summary>
+        /// <returns>The pump bounding box.</returns>
+        private static Rectangle GetPumpBoundingBox()
+        {
+            return SelectPhysicsBoundingBox(300f, 300f, 175f, 175f, 94f, 95f, 57f, 57f);
+        }
+
+        // private static Rectangle GetTargetBoundingBox()
+        // {
+        //     return SelectPhysicsBoundingBox(264f, 350f, 108f, 2f, 90f, 110f, 25f, 1f);
+        // }
+
+        /// <summary>Returns the bounding box for a collectible star.</summary>
+        /// <returns>The star bounding box.</returns>
+        private static Rectangle GetStarBoundingBox()
+        {
+            return SelectPhysicsBoundingBox(70f, 64f, 82f, 82f, 22f, 20f, 30f, 30f);
+        }
+    }
+}

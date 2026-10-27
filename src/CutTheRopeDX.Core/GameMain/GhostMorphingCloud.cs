@@ -1,0 +1,79 @@
+using CutTheRopeDX.Framework;
+using CutTheRopeDX.Framework.Visual;
+
+namespace CutTheRopeDX.GameMain
+{
+    /// <summary>
+    /// Particle effect used when a ghost morphs between visual states.
+    /// </summary>
+    internal sealed class GhostMorphingCloud : MultiParticles
+    {
+        /// <inheritdoc />
+        public override void InitParticle(ref Particle particle)
+        {
+            angle += 360f / totalParticles;
+            base.InitParticle(ref particle);
+            int quadIndex = RND_RANGE(4, 6);
+            SetParticleQuad(ref particle, quadIndex, size);
+            particle.deltaColor = RGBAColor.MakeRGBA(0f, 0f, 0f, 0f);
+        }
+
+        /// <summary>
+        /// Initializes the ghost morphing cloud particle system with its texture and default emission settings.
+        /// </summary>
+        /// <returns>The initialized ghost morphing cloud.</returns>
+        public GhostMorphingCloud Init()
+        {
+            if (InitWithTotalParticlesandImageGrid(5, Image.FromResource(Resources.Img.ObjGhost)) != null)
+            {
+                angle = RND_RANGE(0, 360);
+                size = 1.6f;
+                angleVar = 360f;
+                life = 0.5f;
+                duration = 1.5f;
+                speed = 30f;
+                startColor = RGBAColor.solidOpaqueRGBA;
+                endColor = RGBAColor.transparentRGBA;
+            }
+            return this;
+        }
+
+        /// <inheritdoc />
+        public override void Update(float delta)
+        {
+            base.Update(delta);
+            for (int i = 0; i < particleCount; i++)
+            {
+                ref Particle particle = ref particles[i];
+                if (particle.life > 0f)
+                {
+                    float fadeWindow = 0.2f * life;
+                    if (particle.life > life - fadeWindow)
+                    {
+                        float growthScale = 1.025f;
+                        particle.width *= growthScale;
+                        particle.height *= growthScale;
+                    }
+                    else
+                    {
+                        particle.deltaColor.RedColor = (endColor.RedColor - startColor.RedColor) / fadeWindow;
+                        particle.deltaColor.GreenColor = (endColor.GreenColor - startColor.GreenColor) / fadeWindow;
+                        particle.deltaColor.BlueColor = (endColor.BlueColor - startColor.BlueColor) / fadeWindow;
+                        particle.deltaColor.AlphaChannel = (endColor.AlphaChannel - startColor.AlphaChannel) / fadeWindow;
+                        float shrinkScale = 0.98f;
+                        particle.width *= shrinkScale;
+                        particle.height *= shrinkScale;
+                    }
+                }
+            }
+        }
+
+        /// <summary>
+        /// Starts the ghost morphing cloud using its default particle count.
+        /// </summary>
+        public void StartSystem()
+        {
+            StartSystem(5);
+        }
+    }
+}

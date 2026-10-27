@@ -1,0 +1,207 @@
+using System;
+using System.IO;
+using System.Linq;
+using System.Xml.Linq;
+
+using CutTheRopeDX.Framework.Core;
+using CutTheRopeDX.Framework.Diagnostics;
+using CutTheRopeDX.Framework.Helpers;
+using CutTheRopeDX.Framework.Visual;
+using CutTheRopeDX.Helpers;
+
+using Microsoft.Extensions.Logging;
+
+namespace CutTheRopeDX.GameMain
+{
+    internal sealed partial class GameScene
+    {
+        /// <summary>
+        /// Creates the gravity toggle button used by the game scene.
+        /// </summary>
+        /// <param name="d">Button delegate that receives gravity button events.</param>
+        /// <returns>The initialized gravity toggle button.</returns>
+        public static ToggleButton CreateGravityButtonWithDelegate(IButtonDelegation d)
+        {
+            Image normalUp = Image.FromResource(Resources.Img.ObjStarIdle, 21);
+            Image normalDown = Image.FromResource(Resources.Img.ObjStarIdle, 21);
+            Image invertedUp = Image.FromResource(Resources.Img.ObjStarIdle, 22);
+            Image invertedDown = Image.FromResource(Resources.Img.ObjStarIdle, 22);
+            ToggleButton toggleButton = new ToggleButton().InitWithUpElement1DownElement1UpElement2DownElement2andID(normalUp, normalDown, invertedUp, invertedDown, GameSceneButtonId.GravityToggle);
+            toggleButton.delegateButtonDelegate = d;
+            return toggleButton;
+        }
+
+        /// <summary>
+        /// Initializes the game scene and the pack background layers.
+        /// </summary>
+        public GameScene()
+        {
+            RootController root = Application.SharedRootController();
+            dd = new DelayedDispatcher();
+            initialCameraToCandyDistance = -1f;
+            aniPool = new AnimationsPool
+            {
+                visible = false
+            };
+            _ = AddChild(aniPool);
+            particlesAniPool = new AnimationsPool
+            {
+                visible = false
+            };
+            _ = AddChild(particlesAniPool);
+            decalsLayer = new BaseElement();
+            staticAniPool = new AnimationsPool
+            {
+                visible = false
+            };
+            _ = AddChild(staticAniPool);
+            camera = new Camera2D().InitWithSpeedandType(14f, CAMERATYPE.CAMERASPEEDDELAY);
+            string[] boxBackgrounds = PackConfig.GetBoxBackgrounds(root.Pack);
+            string boxBackground = boxBackgrounds.FirstOrDefault(name => !string.IsNullOrWhiteSpace(name));
+            if (string.IsNullOrWhiteSpace(boxBackground))
+            {
+                throw new InvalidDataException($"Pack config is missing boxBackground for pack {root.Pack}.");
+            }
+            back = new TileMap().InitWithRowsColumns(1, 1);
+            // Wide levels can move the camera past one P1 width, so repeat it on both axes.
+            back.SetRepeatHorizontally(TileMap.Repeat.ALL);
+            back.SetRepeatVertically(TileMap.Repeat.ALL);
+            // Cache the background texture so we can keep scaling tied to internal width.
+            backTexture = Application.GetTexture(boxBackground);
+            back.AddTileQuadwithID(backTexture, 0, 0);
+            back.FillStartAtRowColumnRowsColumnswithTile(0, 0, 1, 1, 0);
+            // Use internal-resolution scale rather than a fixed multiplier.
+            UpdateBackgroundScale();
+            for (int i = 0; i < 3; i++)
+            {
+                const int HudUiStarFirstQuad = 1;
+                const int HudUiStarLastQuad = 11;
+                hudStar[i] = Image.InitializeFromResource(new Animation(), Resources.Img.HudUi);
+                hudStar[i].SetDrawQuad(HudUiStarFirstQuad);
+                _ = hudStar[i].AddAnimationDelayLoopFirstLast(0.05f, Timeline.LoopType.TIMELINE_NO_LOOP, HudUiStarFirstQuad, HudUiStarLastQuad);
+                hudStar[i].SetPauseAtIndexforAnimation(10, 0);
+                hudStarSlotWidth = hudStar[i].width;
+                hudStarSlotHeight = hudStar[i].height;
+                hudStar[i].anchor = 18;
+                hudStar[i].x = (hudStarSlotWidth * i) + (hudStarSlotWidth / 2);
+                hudStar[i].y = hudStarSlotHeight / 2;
+                _ = AddChild(hudStar[i]);
+            }
+            int selectedTraceIndex = Preferences.GetIntForKey("PREFS_SELECTED_TRACE");
+            for (int j = 0; j < pointerGestures.Length; j++)
+            {
+                pointerGestures[j] = new PointerGestureState(FingerTraceFactory.Create(selectedTraceIndex));
+            }
+            clickToCut = Preferences.GetBooleanForKey("PREFS_CLICK_TO_CUT");
+        }
+
+        /// <summary>
+        /// Reloads the current map or map-picker scene.
+        /// </summary>
+        public void Reload()
+        {
+            // The scene object outlives the level it reloads, so the egg must not carry over.
+            easterEgg.Clear();
+            overOmNom = false;
+            dd.CancelAllDispatches();
+            gameplayFlow.Reset();
+            RootController root = Application.SharedRootController();
+            if (root.IsPicker())
+            {
+                XmlLoaderFinishedWithfromwithSuccess(ContentPaths.LoadXml("mappicker://reload"), "mappicker://reload", true);
+                return;
+            }
+
+            if (CustomLevelSession.IsActive)
+            {
+                string customPath = CustomLevelSession.LevelPath;
+                if (CustomLevelFile.TryLoad(customPath, out XElement customMap, out string error))
+                {
+                    XmlLoaderFinishedWithfromwithSuccess(customMap, customPath, true);
+                }
+                else
+                {
+                    Console.Error.WriteLine(error);
+                    ILogger logger = Log.For(LogCategories.Playtest);
+                    PlaytestLog.LevelRejected(logger, error);
+                }
+
+                return;
+            }
+
+            int pack = root.Pack;
+            int level = root.Level;
+            string mapPath = Path.Combine(ContentPaths.MapsDirectory, LevelsList.LEVEL_NAMES[pack, level]);
+            XmlLoaderFinishedWithfromwithSuccess(ContentPaths.LoadXml(mapPath), mapPath, true);
+        }
+
+        /// <summary>
+        /// Loads the next map in the active pack or advances the map picker.
+        /// </summary>
+        public void LoadNextMap()
+        {
+            dd.CancelAllDispatches();
+            gameplayFlow.Reset();
+            initialCameraToCandyDistance = -1f;
+            animateRestartDim = false;
+            RootController root = Application.SharedRootController();
+            if (root.IsPicker())
+            {
+                XmlLoaderFinishedWithfromwithSuccess(ContentPaths.LoadXml("mappicker://next"), "mappicker://next", true);
+                return;
+            }
+            int pack = root.Pack;
+            int level = root.Level;
+            if (level < Preferences.GetLevelsInPackCount(pack) - 1)
+            {
+                root.Level = ++level;
+                root.MapName = LevelsList.LEVEL_NAMES[pack, level];
+                string mapPath = Path.Combine(ContentPaths.MapsDirectory, LevelsList.LEVEL_NAMES[pack, level]);
+                XmlLoaderFinishedWithfromwithSuccess(ContentPaths.LoadXml(mapPath), mapPath, true);
+            }
+        }
+
+        /// <summary>
+        /// Restarts the current scene by hiding and showing it again.
+        /// </summary>
+        public void Restart()
+        {
+            Hide();
+            Show();
+        }
+
+        /// <summary>
+        /// Creates a gravity earth animation image and offsets it from the configured pack position.
+        /// </summary>
+        /// <param name="xs">Additional X offset for the image.</param>
+        /// <param name="ys">Additional Y offset for the image.</param>
+        public void CreateEarthImageWithOffsetXY(float xs, float ys)
+        {
+            Image image = Image.FromResource(Resources.Img.ObjStarIdle, 23);
+            image.anchor = 18;
+            Timeline timeline = new Timeline().InitWithMaxKeyFramesOnTrack(2);
+            timeline.AddKeyFrame(KeyFrame.MakeRotation(0, KeyFrame.TransitionType.FRAME_TRANSITION_LINEAR, 0));
+            timeline.AddKeyFrame(KeyFrame.MakeRotation(180, KeyFrame.TransitionType.FRAME_TRANSITION_LINEAR, 0.3f));
+            image.AddTimelinewithID(timeline, 1);
+            timeline = new Timeline().InitWithMaxKeyFramesOnTrack(2);
+            timeline.AddKeyFrame(KeyFrame.MakeRotation(180, KeyFrame.TransitionType.FRAME_TRANSITION_LINEAR, 0));
+            timeline.AddKeyFrame(KeyFrame.MakeRotation(0, KeyFrame.TransitionType.FRAME_TRANSITION_LINEAR, 0.3f));
+            image.AddTimelinewithID(timeline, 0);
+
+            RootController root = Application.SharedRootController();
+            Vector? earthBgPosition = PackConfig.GetEarthBgPosition(root.Pack);
+            if (earthBgPosition.HasValue)
+            {
+                image.x = earthBgPosition.Value.X;
+                image.y = earthBgPosition.Value.Y;
+            }
+
+            image.scaleX = 1f;
+            image.scaleY = 1f;
+            image.x += xs;
+            image.y += ys;
+            gravityState.AddEarthAnimation(image);
+            gravityState.RelayoutEarthAnimations(back.x, back.y);
+        }
+    }
+}

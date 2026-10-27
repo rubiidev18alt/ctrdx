@@ -1,0 +1,65 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0-android</TargetFramework>
+    <OutputType>Exe</OutputType>
+    <RootNamespace>CutTheRopeDX.Android</RootNamespace>
+    <AssemblyName>CutTheRopeDX.Android</AssemblyName>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+
+    <ApplicationId>page.yell0wsuit.cuttherope.dx</ApplicationId>
+    <ApplicationTitle>Cut the Rope DX</ApplicationTitle>
+    <ApplicationVersion>1</ApplicationVersion>
+    <ApplicationDisplayVersion>2.50.1</ApplicationDisplayVersion>
+    <SupportedOSPlatformVersion>29</SupportedOSPlatformVersion>
+    <!-- Keep the four-ABI default, but let an explicit -r select one ABI instead of
+         leaving both RuntimeIdentifier and RuntimeIdentifiers set for the SDK to reconcile. -->
+    <RuntimeIdentifiers Condition="'$(RuntimeIdentifier)' == ''">android-arm;android-arm64;android-x86;android-x64</RuntimeIdentifiers>
+    <AndroidPackageFormats>apk</AndroidPackageFormats>
+
+    <!-- OpenFd is used for audio and video. Already-compressed media must not be
+         compressed a second time, because Android cannot return an fd for a
+         deflated asset. The SDK turns this list into aapt2's -0 arguments. -->
+    <AndroidStoreUncompressedFileExtensions>$(AndroidStoreUncompressedFileExtensions);ogg;webm</AndroidStoreUncompressedFileExtensions>
+
+    <!-- The Android package uses the browser-sized content, not the desktop
+         PNG/WAV/FLAC payload that BuildContent.targets would otherwise deploy. -->
+    <DeployContent>false</DeployContent>
+    <DeployAndroidContent Condition="'$(DeployAndroidContent)' == ''">true</DeployAndroidContent>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="SkiaSharp.NativeAssets.Android" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../CutTheRopeDX.Core/CutTheRopeDX.Core.csproj" />
+    <ProjectReference Include="../CutTheRopeDX.Rendering.Skia/CutTheRopeDX.Rendering.Skia.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- The SDK's default asset glob runs before generated content exists.
+         CollectAndroidContent adds it after conversion instead. Its hook is the SDK's
+         _ComputeAndroidAssetsPaths target: UpdateAndroidAssets depends on that target,
+         so hooking UpdateAndroidAssets itself would be too late. -->
+    <AndroidAsset Remove="Assets/content/**" />
+  </ItemGroup>
+
+  <Import Project="../../content/Builder/BuildContent.targets" />
+
+  <Target Name="BuildAndroidContent"
+          DependsOnTargets="BuildGameContent"
+          BeforeTargets="_ComputeAndroidAssetsPaths"
+          Condition="'$(BuildContent)' == 'true' AND '$(DeployAndroidContent)' == 'true'">
+    <Exec Command="python3 &quot;$(MSBuildProjectDirectory)/../../scripts/build_web_content.py&quot; --source &quot;$(ContentSourcePath)&quot; --out &quot;$(MSBuildProjectDirectory)/Assets/content&quot; --require-video --no-progress" />
+  </Target>
+
+  <Target Name="CollectAndroidContent"
+          DependsOnTargets="BuildAndroidContent"
+          BeforeTargets="_ComputeAndroidAssetsPaths"
+          Condition="'$(DeployAndroidContent)' == 'true'">
+    <ItemGroup Condition="Exists('$(MSBuildProjectDirectory)/Assets/content')">
+      <AndroidAsset Include="Assets/content/**/*"
+                    Exclude="Assets/content/assets.json;Assets/content/.build-manifest.json" />
+    </ItemGroup>
+  </Target>
+</Project>

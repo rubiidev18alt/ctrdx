@@ -18,6 +18,7 @@ using CutTheRopeDX.Rendering.Skia;
 
 using SkiaSharp;
 
+using Activity = Android.App.Activity;
 using Application = CutTheRopeDX.Framework.Core.Application;
 
 namespace CutTheRopeDX.Android

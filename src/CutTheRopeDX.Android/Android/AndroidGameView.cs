@@ -6,8 +6,9 @@ using Android.Opengl;
 using Android.Util;
 using Android.Views;
 using Javax.Microedition.Khronos.Opengles;
-using EGLConfig = Javax.Microedition.Khronos.Egl.EGLConfig;
 using SkiaSharp;
+
+using EGLConfig = Javax.Microedition.Khronos.Egl.EGLConfig;
 
 namespace CutTheRopeDX.Android
 {
@@ -49,11 +50,11 @@ namespace CutTheRopeDX.Android
             {
                 case MotionEventActions.Down:
                 case MotionEventActions.PointerDown:
-                {
-                    int index = e.ActionIndex;
-                    _host.QueueTouches(_touch.Press(e.GetPointerId(index), e.GetX(index), e.GetY(index)));
-                    break;
-                }
+                    {
+                        int index = e.ActionIndex;
+                        _host.QueueTouches(_touch.Press(e.GetPointerId(index), e.GetX(index), e.GetY(index)));
+                        break;
+                    }
 
                 case MotionEventActions.Move:
                     for (int index = 0; index < e.PointerCount; index++)
@@ -65,11 +66,11 @@ namespace CutTheRopeDX.Android
 
                 case MotionEventActions.Up:
                 case MotionEventActions.PointerUp:
-                {
-                    int index = e.ActionIndex;
-                    _host.QueueTouches(_touch.Release(e.GetPointerId(index), e.GetX(index), e.GetY(index)));
-                    break;
-                }
+                    {
+                        int index = e.ActionIndex;
+                        _host.QueueTouches(_touch.Release(e.GetPointerId(index), e.GetX(index), e.GetY(index)));
+                        break;
+                    }
 
                 case MotionEventActions.Cancel:
                 case MotionEventActions.Outside:

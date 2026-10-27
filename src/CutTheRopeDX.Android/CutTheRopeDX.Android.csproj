@@ -2,7 +2,8 @@
   <PropertyGroup>
     <TargetFramework>net10.0-android</TargetFramework>
     <OutputType>Exe</OutputType>
-    <RootNamespace>CutTheRopeDX.Android</RootNamespace>
+    <RootNamespace>CutTheRopeDX</RootNamespace>
+    <AndroidResgenNamespace>CutTheRopeDX.Android</AndroidResgenNamespace>
     <AssemblyName>CutTheRopeDX.Android</AssemblyName>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
 

@@ -225,7 +225,7 @@ namespace CutTheRopeDX.Android
             _content = content;
             using AudioAttributes attributes = new AudioAttributes.Builder()
                 .SetUsage(AudioUsageKind.Game)
-                .SetContentType(AudioContentType.Sfx)
+                .SetContentType(AudioContentType.Sonification)
                 .Build();
             _soundPool = new SoundPool.Builder()
                 .SetMaxStreams(24)

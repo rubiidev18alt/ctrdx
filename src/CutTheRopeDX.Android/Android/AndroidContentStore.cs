@@ -120,7 +120,7 @@ namespace CutTheRopeDX.Android
             {
                 try
                 {
-                    using Stream source = _assets.Open(assetPath, AssetManager.Access.Streaming);
+                    using Stream source = _assets.Open(assetPath);
                     using MemoryStream destination = new();
                     source.CopyTo(destination);
                     return destination.ToArray();

@@ -1,7 +1,5 @@
 using System;
 
-using Android.Util;
-
 using Microsoft.Extensions.Logging;
 
 namespace CutTheRopeDX.Android
@@ -61,14 +59,14 @@ namespace CutTheRopeDX.Android
                     message += Environment.NewLine + exception;
                 }
 
-                LogPriority priority = logLevel switch
+                string text = $"{category}: {message}";
+                _ = logLevel switch
                 {
-                    LogLevel.Trace or LogLevel.Debug => LogPriority.Debug,
-                    LogLevel.Information => LogPriority.Info,
-                    LogLevel.Warning => LogPriority.Warn,
-                    _ => LogPriority.Error,
+                    LogLevel.Trace or LogLevel.Debug => global::Android.Util.Log.Debug(Tag, text),
+                    LogLevel.Information => global::Android.Util.Log.Info(Tag, text),
+                    LogLevel.Warning => global::Android.Util.Log.Warn(Tag, text),
+                    _ => global::Android.Util.Log.Error(Tag, text),
                 };
-                _ = global::Android.Util.Log.Println(priority, Tag, $"{category}: {message}");
             }
         }
 

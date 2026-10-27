@@ -5,6 +5,10 @@
     <TargetFramework>net10.0</TargetFramework>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <IsAotCompatible>true</IsAotCompatible>
+    <!-- NuGet restore can flow the application's Android RID into this portable
+         ProjectReference. The library is built without a RID, so it must not
+         download an unavailable Android runtime pack of its own. -->
+    <EnableRuntimePackDownload Condition="$([System.String]::Copy('$(RuntimeIdentifier)').StartsWith('android-'))">false</EnableRuntimePackDownload>
   </PropertyGroup>
   <ItemGroup>
     <InternalsVisibleTo Include="CutTheRope-DX" />

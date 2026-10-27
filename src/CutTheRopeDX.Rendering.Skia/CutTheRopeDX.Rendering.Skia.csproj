@@ -2,6 +2,9 @@
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>
     <IsAotCompatible>true</IsAotCompatible>
+    <!-- Keep Android RID restore from acquiring a runtime pack for this
+         RID-agnostic library; the Android application supplies the runtime. -->
+    <EnableRuntimePackDownload Condition="$([System.String]::Copy('$(RuntimeIdentifier)').StartsWith('android-'))">false</EnableRuntimePackDownload>
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="SkiaSharp" />

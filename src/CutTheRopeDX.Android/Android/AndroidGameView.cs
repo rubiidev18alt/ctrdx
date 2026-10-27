@@ -6,6 +6,7 @@ using Android.Opengl;
 using Android.Util;
 using Android.Views;
 using Javax.Microedition.Khronos.Opengles;
+
 using SkiaSharp;
 
 using EGLConfig = Javax.Microedition.Khronos.Egl.EGLConfig;

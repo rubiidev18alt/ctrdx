@@ -5,8 +5,8 @@ using Android.Content;
 using Android.Opengl;
 using Android.Util;
 using Android.Views;
-using Javax.Microedition.Khronos.Egl;
 using Javax.Microedition.Khronos.Opengles;
+using EGLConfig = Javax.Microedition.Khronos.Egl.EGLConfig;
 using SkiaSharp;
 
 namespace CutTheRopeDX.Android;

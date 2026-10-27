@@ -203,7 +203,7 @@ namespace CutTheRopeDX.Android
         private void ConfigureWindow()
         {
             Window.AddFlags(WindowManagerFlags.KeepScreenOn);
-            if (Build.VERSION.SdkInt >= BuildVersionCodes.P)
+            if (OperatingSystem.IsAndroidVersionAtLeast(28))
             {
                 Window.Attributes.LayoutInDisplayCutoutMode = LayoutInDisplayCutoutMode.ShortEdges;
             }
